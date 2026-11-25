@@ -1,0 +1,10 @@
+{
+  "name": "diario-de-bordo",
+  "version": "1.0.0",
+  "description": "Aplicativo Web/PWA pessoal de diário 100% offline com IndexedDB, fotos, áudios, checklists e mural personalizável.",
+  "private": true,
+  "scripts": {
+    "dev": "powershell -NoProfile -ExecutionPolicy Bypass -File ./server.ps1 -Port 5173 -OpenBrowser",
+    "serve": "npx serve -l 5173 ."
+  }
+}

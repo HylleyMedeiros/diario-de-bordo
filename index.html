@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#121212">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Diário de Bordo">
+  <meta name="description" content="Diário de Bordo — Seu espaço pessoal elegante, privado e 100% offline.">
+  <title>Diário de Bordo</title>
+  <link rel="manifest" href="./manifest.json">
+  <link rel="icon" type="image/svg+xml" href="./assets/icon.svg">
+  <link rel="apple-touch-icon" href="./assets/icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&family=Oswald:wght@400;600&family=Playfair+Display:ital,wght@0,600;0,700;1,500;1,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./css/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Splash Screen (brief animated opening with minimalist diary icon & live date) -->
+    <div class="splash-screen" id="splash-screen" role="status" aria-label="Carregando Diário de Bordo">
+      <div class="splash-atmosphere" aria-hidden="true">
+        <div class="splash-moon"></div>
+        <svg class="splash-hills" viewBox="0 0 430 220" preserveAspectRatio="none">
+          <path d="M0 155 Q95 95 190 135 T430 115 L430 220 L0 220 Z" fill="#1b1917" opacity="0.72"/>
+          <path d="M0 180 Q120 120 250 162 T430 148 L430 220 L0 220 Z" fill="#141312" opacity="0.9"/>
+          <path d="M0 198 Q145 162 290 190 T430 176 L430 220 L0 220 Z" fill="#121212"/>
+        </svg>
+      </div>
+      <div class="splash-center">
+        <div class="splash-icon-ring">
+          <img src="./assets/icon.svg" alt="Ícone Diário de Bordo">
+        </div>
+        <h1 class="splash-date" id="splash-date"></h1>
+      </div>
+      <div class="splash-brand-footer">
+        <span class="splash-brand-dot"></span>
+        <span>Diário de Bordo</span>
+      </div>
+    </div>
+
+    <!-- Main Content Views -->
+    <main class="app-main">
+      <!-- TAB 1: DIÁRIO (Mural + Timeline) -->
+      <section class="tab-panel active" id="tab-diary" data-tab-panel="diary">
+        <header class="mural-container" id="mural-container"></header>
+
+        <div class="timeline-sheet">
+          <!-- Search Bar (toggled via magnifying glass) -->
+          <div class="timeline-search-bar" id="timeline-search-bar" hidden>
+            <input type="search" id="timeline-search-input" class="dark-input" placeholder="Buscar por título, texto ou #tag...">
+            <button class="icon-btn" id="timeline-search-close" aria-label="Fechar busca">&times;</button>
+          </div>
+
+          <!-- Chronological Entries / Empty State -->
+          <div class="timeline-list" id="timeline-list"></div>
+        </div>
+      </section>
+
+      <!-- TAB 2: CALENDÁRIO -->
+      <section class="tab-panel tab-padded" id="tab-calendar" data-tab-panel="calendar"></section>
+
+      <!-- TAB 3: ESTATÍSTICAS -->
+      <section class="tab-panel tab-padded" id="tab-stats" data-tab-panel="stats"></section>
+
+      <!-- TAB 4: MAIS -->
+      <section class="tab-panel tab-padded" id="tab-more" data-tab-panel="more"></section>
+    </main>
+
+    <!-- Fixed Bottom Navigation Bar with Elevated Center '+' FAB -->
+    <nav class="bottom-nav" aria-label="Navegação principal">
+      <button class="nav-btn active" data-nav="diary" aria-label="Diário">
+        <span class="nav-icon"></span>
+        <span class="nav-label">Diário</span>
+      </button>
+      <button class="nav-btn" data-nav="calendar" aria-label="Calendário">
+        <span class="nav-icon"></span>
+        <span class="nav-label">Calendário</span>
+      </button>
+
+      <div class="fab-slot">
+        <button class="fab-add" id="fab-add-btn" aria-label="Novo registro"></button>
+      </div>
+
+      <button class="nav-btn" data-nav="stats" aria-label="Estatísticas">
+        <span class="nav-icon"></span>
+        <span class="nav-label">Estatísticas</span>
+      </button>
+      <button class="nav-btn" data-nav="more" aria-label="Mais">
+        <span class="nav-icon"></span>
+        <span class="nav-label">Mais</span>
+      </button>
+    </nav>
+
+    <!-- Modals & Full-Screen Sheets (scoped inside app-shell for crisp mobile feel) -->
+    <div class="modal-root" id="datepicker-modal"></div>
+    <div class="modal-root" id="mural-modal"></div>
+    <div class="modal-root" id="pwa-modal"></div>
+    <div class="fullscreen-sheet" id="reader-modal"></div>
+    <div class="fullscreen-sheet" id="editor-screen"></div>
+    <div class="fullscreen-sheet" id="gratitude-screen"></div>
+    <div class="lightbox-overlay" id="photo-lightbox"></div>
+
+    <!-- Toast -->
+    <div class="app-toast" id="app-toast" role="status" aria-live="polite"></div>
+  </div>
+
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>
