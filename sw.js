@@ -1,6 +1,6 @@
-// Diário de Bordo PWA Service Worker — v10 (Mural Adaptativo 2880px + Tira Vertical)
+// Diário de Bordo PWA Service Worker — v11 (Assinatura Autoral + Ordem das Fotos + 2880px)
 const CACHE_PREFIX = 'diario-de-bordo-';
-const CACHE_NAME = 'diario-de-bordo-v10';
+const CACHE_NAME = 'diario-de-bordo-v11';
 const SHARE_DB_NAME = 'DiarioDeBordoShareInbox';
 const SHARE_DB_VERSION = 1;
 const SHARE_STORE = 'pending_shares';

@@ -8,6 +8,8 @@ const BASE_POSTER_H = 2700;
 const EXPORT_QUAD_W = 2880;
 const STRIP_W = 1440;
 const MAX_EXPORT_H = 14800;
+const SIGNATURE_TEXT = 'Hylley Medeiros';
+const SIGNATURE_FONT_STACK = "'Dancing Script', 'Brush Script MT', 'Segoe Script', 'Snell Roundhand', 'Caveat', cursive";
 
 const PALETTES = [
   {
@@ -858,6 +860,69 @@ function drawVideosQuadrant(ctx, rect, palette, videoEntries) {
   });
 }
 
+function getSelectedPhotos(state) {
+  if (!Array.isArray(state.selectedPhotoOrder)) return [];
+  return state.selectedPhotoOrder
+    .map((idx) => state.photos[idx])
+    .filter(Boolean);
+}
+
+function drawMuralFooter(ctx, {
+  width,
+  padX,
+  dividerY,
+  footY,
+  tags,
+  fallbackLeft,
+  brand,
+  palette,
+  showSignature,
+  maxTagsW,
+  sigSize = 44
+}) {
+  ctx.save();
+  ctx.strokeStyle = palette.border;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(padX, dividerY);
+  ctx.lineTo(width - padX, dividerY);
+  ctx.stroke();
+
+  ctx.font = '600 22px "Inter", system-ui, sans-serif';
+  ctx.fillStyle = palette.headerSub;
+  ctx.textBaseline = 'top';
+  const leftText = Array.isArray(tags) && tags.length > 0
+    ? tags.slice(0, 6).map((t) => `#${t}`).join('   ')
+    : fallbackLeft;
+  if (leftText) {
+    ctx.fillText(truncateLine(ctx, leftText, maxTagsW), padX, footY);
+  }
+
+  if (showSignature) {
+    ctx.save();
+    ctx.font = `italic 600 ${sigSize}px ${SIGNATURE_FONT_STACK}`;
+    ctx.fillStyle = palette.accent;
+    ctx.globalAlpha = 0.94;
+    ctx.textBaseline = 'top';
+    const sigW = ctx.measureText(SIGNATURE_TEXT).width;
+    ctx.fillText(SIGNATURE_TEXT, width - padX - sigW, dividerY + 16);
+
+    ctx.font = '700 17px "Inter", system-ui, sans-serif';
+    ctx.fillStyle = palette.headerSub;
+    ctx.globalAlpha = 0.68;
+    const brandW = ctx.measureText(brand).width;
+    ctx.fillText(brand, width - padX - brandW, dividerY + 69);
+    ctx.restore();
+  } else {
+    ctx.font = '700 22px "Inter", system-ui, sans-serif';
+    ctx.fillStyle = palette.accent;
+    const brandW = ctx.measureText(brand).width;
+    ctx.fillText(brand, width - padX - brandW, footY);
+  }
+
+  ctx.restore();
+}
+
 function measureQuadrantsLayout(ctx, state) {
   const palette = PALETTES.find((p) => p.id === state.paletteId) || PALETTES[0];
   const entry = state.entry;
@@ -881,8 +946,9 @@ function measureQuadrantsLayout(ctx, state) {
   const headerDividerY = titleLines.length > 1 ? 310 : 236;
   const gridTop = headerDividerY + 32;
 
-  const footerH = 104;
-  const selectedPhotos = state.photos.filter((_, i) => state.selectedPhotoIds.has(i));
+  const showSig = Boolean(state.showSignature);
+  const footerH = showSig ? 136 : 104;
+  const selectedPhotos = getSelectedPhotos(state);
   const selectedAudios = state.audios.filter((_, i) => state.selectedAudioIds.has(i));
   const selectedVideos = state.videos.filter((_, i) => state.selectedVideoIds.has(i));
 
@@ -936,8 +1002,8 @@ function measureQuadrantsLayout(ctx, state) {
   const q2 = { x: padX + colW + gap, y: gridTop, w: colW, h: rowHTop };
 
   const footerDividerY = gridBottom + 24;
-  const footY = footerDividerY + 26;
-  const totalH = footY + 54;
+  const footY = footerDividerY + (showSig ? 36 : 26);
+  const totalH = footerDividerY + (showSig ? 112 : 80);
 
   return {
     palette,
@@ -1013,30 +1079,20 @@ async function renderDayMuralCanvas(canvas, state, { precomputedLayout = null, h
     drawVideosQuadrant(ctx, layout.q4, palette, layout.selectedVideos);
   }
 
-  // 4. Thin Elegant Footer
-  ctx.strokeStyle = palette.border;
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.moveTo(layout.padX, layout.footerDividerY);
-  ctx.lineTo(POSTER_W - layout.padX, layout.footerDividerY);
-  ctx.stroke();
-
-  ctx.font = '600 23px "Inter", system-ui, sans-serif';
-  ctx.fillStyle = palette.headerSub;
-  ctx.textBaseline = 'top';
-  if (entry.tags.length > 0) {
-    const tagsStr = entry.tags.slice(0, 6).map((t) => `#${t}`).join('   ');
-    ctx.fillText(truncateLine(ctx, tagsStr, 1200), layout.padX, layout.footY);
-  } else {
-    const fallbackLeft = `${parts.day} ${parts.monthShort} ${parts.year} · ${parts.time}`;
-    ctx.fillText(fallbackLeft, layout.padX, layout.footY);
-  }
-
-  const brand = 'DIÁRIO DE BORDO  ·  MURAL DO DIA';
-  ctx.font = '700 22px "Inter", system-ui, sans-serif';
-  ctx.fillStyle = palette.accent;
-  const brandW = ctx.measureText(brand).width;
-  ctx.fillText(brand, POSTER_W - layout.padX - brandW, layout.footY);
+  // 4. Thin Elegant Footer + Optional Signature
+  drawMuralFooter(ctx, {
+    width: POSTER_W,
+    padX: layout.padX,
+    dividerY: layout.footerDividerY,
+    footY: layout.footY,
+    tags: entry.tags,
+    fallbackLeft: `${parts.day} ${parts.monthShort} ${parts.year} · ${parts.time}`,
+    brand: 'DIÁRIO DE BORDO  ·  MURAL DO DIA',
+    palette,
+    showSignature: Boolean(state.showSignature),
+    maxTagsW: 1120,
+    sigSize: 44
+  });
 
   ctx.restore();
 }
@@ -1145,7 +1201,7 @@ function measureVerticalStripLayout(ctx, state) {
   cursorY += textBlock.h + 34;
 
   // 3. Full-Width Stacked Photos Block
-  const selectedPhotos = state.photos.filter((_, i) => state.selectedPhotoIds.has(i));
+  const selectedPhotos = getSelectedPhotos(state);
   let photosBlock = null;
   if (selectedPhotos.length > 0) {
     const photoGap = 28;
@@ -1230,9 +1286,10 @@ function measureVerticalStripLayout(ctx, state) {
   }
 
   // 6. Footer
+  const showSig = Boolean(state.showSignature);
   const footerDividerY = cursorY + 4;
-  const footY = footerDividerY + 34;
-  const totalH = footY + 76;
+  const footY = footerDividerY + (showSig ? 36 : 30);
+  const totalH = footerDividerY + (showSig ? 112 : 96);
 
   return {
     palette,
@@ -1495,27 +1552,20 @@ async function renderVerticalStripCanvas(canvas, state, precomputedLayout = null
     });
   }
 
-  // 7. Continuous Footer
-  ctx.strokeStyle = palette.border;
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.moveTo(layout.padX, layout.footerDividerY);
-  ctx.lineTo(STRIP_W - layout.padX, layout.footerDividerY);
-  ctx.stroke();
-
-  if (entry.tags.length > 0) {
-    ctx.font = '600 22px "Inter", system-ui, sans-serif';
-    ctx.fillStyle = palette.headerSub;
-    ctx.textBaseline = 'top';
-    const tagsStr = entry.tags.slice(0, 6).map((t) => `#${t}`).join('   ');
-    ctx.fillText(truncateLine(ctx, tagsStr, 780), layout.padX, layout.footY);
-  }
-  const brand = 'DIÁRIO DE BORDO  ·  TIRA CONTÍNUA';
-  ctx.font = '700 21px "Inter", system-ui, sans-serif';
-  ctx.fillStyle = palette.accent;
-  ctx.textBaseline = 'top';
-  const brandW = ctx.measureText(brand).width;
-  ctx.fillText(brand, STRIP_W - layout.padX - brandW, layout.footY);
+  // 7. Continuous Footer + Optional Signature
+  drawMuralFooter(ctx, {
+    width: STRIP_W,
+    padX: layout.padX,
+    dividerY: layout.footerDividerY,
+    footY: layout.footY,
+    tags: entry.tags,
+    fallbackLeft: `${layout.parts.day} ${layout.parts.monthShort} ${layout.parts.year} · ${layout.parts.time}`,
+    brand: 'DIÁRIO DE BORDO  ·  TIRA CONTÍNUA',
+    palette,
+    showSignature: Boolean(state.showSignature),
+    maxTagsW: 680,
+    sigSize: 40
+  });
 
   ctx.restore();
 }
@@ -1536,22 +1586,23 @@ export async function openDayMuralStudio(rawEntry, { onToast, onOpenLightbox } =
     paletteId: 'ouro-obsidiana',
     fontMode: 'auto',
     format: 'png', // 'png' | 'jpeg'
+    showSignature: true,
     narrativeText: buildInitialNarrative(entry),
     photos: entry.photos.map((p) => ({ ...p, bitmap: null, naturalWidth: 0, naturalHeight: 0 })),
     audios: entry.audios.map((a) => ({ ...a })),
     videos: entry.videos.map((v) => ({ ...v, thumb: null })),
-    selectedPhotoIds: new Set(entry.photos.map((_, i) => i)),
+    selectedPhotoOrder: entry.photos.map((_, i) => i),
     selectedAudioIds: new Set(entry.audios.map((_, i) => i)),
     selectedVideoIds: new Set(entry.videos.map((_, i) => i))
   };
 
-  let thumbObjectUrls = [];
+  let photoThumbUrls = [];
   let refreshCanvas = () => {};
   let renderSeq = 0;
 
   const revokeThumbUrls = () => {
-    thumbObjectUrls.forEach((u) => URL.revokeObjectURL(u));
-    thumbObjectUrls = [];
+    photoThumbUrls.forEach((u) => URL.revokeObjectURL(u));
+    photoThumbUrls = [];
   };
 
   const releasePreviewMedia = () => {
@@ -1583,16 +1634,16 @@ export async function openDayMuralStudio(rawEntry, { onToast, onOpenLightbox } =
 
   const renderStudioMarkup = () => {
     revokeThumbUrls();
+    photoThumbUrls = state.photos.map((ph) => URL.createObjectURL(ph.blob));
 
     const photoThumbsHtml = state.photos.length
-      ? state.photos.map((ph, idx) => {
-          const url = URL.createObjectURL(ph.blob);
-          thumbObjectUrls.push(url);
-          const sel = state.selectedPhotoIds.has(idx);
+      ? state.photos.map((_, idx) => {
+          const pos = state.selectedPhotoOrder.indexOf(idx);
+          const sel = pos !== -1;
           return `
             <button type="button" class="mural-pick-thumb ${sel ? 'selected' : ''}" data-ms-photo="${idx}" title="Foto ${idx + 1}">
-              <img src="${url}" alt="Foto ${idx + 1}">
-              <span class="mp-check">${sel ? ICONS.check : ''}</span>
+              <img src="${photoThumbUrls[idx]}" alt="Foto ${idx + 1}">
+              <span class="mp-check ${pos === 0 ? 'is-hero' : ''}">${sel ? pos + 1 : ''}</span>
             </button>
           `;
         }).join('')
@@ -1680,6 +1731,19 @@ export async function openDayMuralStudio(rawEntry, { onToast, onOpenLightbox } =
               </div>
             </section>
 
+            <!-- Author Signature Toggle -->
+            <section class="card mural-control-card">
+              <div class="mural-signature-row">
+                <div class="mural-signature-info">
+                  <label class="field-label">Assinatura no Rodapé</label>
+                  <span class="mural-signature-preview">${SIGNATURE_TEXT}</span>
+                </div>
+                <button type="button" class="mural-toggle-pill ${state.showSignature ? 'active' : ''}" id="ms-signature-toggle" aria-pressed="${state.showSignature ? 'true' : 'false'}">
+                  ${state.showSignature ? 'Ativada' : 'Oculta'}
+                </button>
+              </div>
+            </section>
+
             <!-- Text Review & Font Control -->
             <section class="card mural-control-card">
               <div class="section-row-between">
@@ -1693,10 +1757,11 @@ export async function openDayMuralStudio(rawEntry, { onToast, onOpenLightbox } =
               <textarea id="ms-narrative-input" class="dark-input dark-textarea" rows="4" placeholder="Revise o relato corrido que aparecerá no bloco de texto...">${escapeHtml(state.narrativeText)}</textarea>
             </section>
 
-            <!-- Photos Selector -->
+            <!-- Photos Selector & Quick Order -->
             <section class="card mural-control-card">
-              <label class="field-label" id="ms-label-photos">2. Bloco de Fotos (Superior Direito · ${state.selectedPhotoIds.size}/${state.photos.length})</label>
+              <label class="field-label" id="ms-label-photos">2. Bloco de Fotos (Superior Direito · ${state.selectedPhotoOrder.length}/${state.photos.length})</label>
               <div class="mural-pick-grid">${photoThumbsHtml}</div>
+              <div class="mural-photo-order-wrap" id="ms-photo-order-wrap"></div>
             </section>
 
             <!-- Audios Selector -->
@@ -1753,7 +1818,7 @@ export async function openDayMuralStudio(rawEntry, { onToast, onOpenLightbox } =
           : '1. Bloco de Texto (Superior Esquerdo)';
       }
       if (labelPhotos) {
-        labelPhotos.textContent = `2. Bloco de Fotos (${isStrip ? 'Largura Ampla' : 'Superior Direito'} · ${state.selectedPhotoIds.size}/${state.photos.length})`;
+        labelPhotos.textContent = `2. Bloco de Fotos (${isStrip ? 'Largura Ampla' : 'Superior Direito'} · ${state.selectedPhotoOrder.length}/${state.photos.length})`;
       }
       if (labelAudios) {
         labelAudios.textContent = `3. Bloco de Áudios (${isStrip ? 'Bloco Discreto' : 'Inferior Esquerdo'} · ${state.selectedAudioIds.size}/${state.audios.length})`;
@@ -1764,6 +1829,64 @@ export async function openDayMuralStudio(rawEntry, { onToast, onOpenLightbox } =
 
       previewFrame?.classList.toggle('mural-strip-scroll', isScrollable);
       canvas?.classList.toggle('strip-mode', isScrollable);
+    };
+
+    const syncPhotoOrderUI = () => {
+      const isStrip = state.layoutMode === 'strip';
+      const labelPhotos = screen.querySelector('#ms-label-photos');
+      if (labelPhotos) {
+        labelPhotos.textContent = `2. Bloco de Fotos (${isStrip ? 'Largura Ampla' : 'Superior Direito'} · ${state.selectedPhotoOrder.length}/${state.photos.length})`;
+      }
+
+      screen.querySelectorAll('[data-ms-photo]').forEach((btn) => {
+        const idx = Number(btn.dataset.msPhoto);
+        const pos = state.selectedPhotoOrder.indexOf(idx);
+        const sel = pos !== -1;
+        btn.classList.toggle('selected', sel);
+        const badge = btn.querySelector('.mp-check');
+        if (badge) {
+          badge.textContent = sel ? String(pos + 1) : '';
+          badge.classList.toggle('is-hero', pos === 0);
+        }
+      });
+
+      const orderWrap = screen.querySelector('#ms-photo-order-wrap');
+      if (!orderWrap) return;
+
+      const totalSel = state.selectedPhotoOrder.length;
+      if (totalSel <= 1) {
+        orderWrap.innerHTML = totalSel === 1
+          ? `<p class="helper-caption">1 foto selecionada (em destaque principal). Selecione mais fotos para definir a ordem.</p>`
+          : '';
+        return;
+      }
+
+      orderWrap.innerHTML = `
+        <div class="mural-photo-order-title">Ordem no mural (1º = foto principal em destaque)</div>
+        <div class="mural-photo-order-list">
+          ${state.selectedPhotoOrder.map((photoIdx, pos) => {
+            const ph = state.photos[photoIdx];
+            const thumbUrl = photoThumbUrls[photoIdx] || '';
+            const rawName = (ph?.caption || '').trim() || (ph?.name || '').replace(/\.[^.]+$/, '') || `Foto ${photoIdx + 1}`;
+            const isFirst = pos === 0;
+            const isLast = pos === totalSel - 1;
+            return `
+              <div class="mural-order-item">
+                <img class="mural-order-thumb" src="${thumbUrl}" alt="Foto ${photoIdx + 1}">
+                <div class="mural-order-meta">
+                  <span class="mural-order-rank ${isFirst ? 'is-hero' : ''}">${isFirst ? '1º · Destaque' : `${pos + 1}º`}</span>
+                  <span class="mural-order-name">${escapeHtml(rawName)}</span>
+                </div>
+                <div class="mural-order-actions">
+                  <button type="button" class="mural-order-btn mural-order-btn-top" data-ms-order-top="${pos}" ${isFirst ? 'disabled' : ''} title="Puxar para 1º lugar">Topo</button>
+                  <button type="button" class="mural-order-btn" data-ms-order-up="${pos}" ${isFirst ? 'disabled' : ''} aria-label="Subir foto" title="Subir">↑</button>
+                  <button type="button" class="mural-order-btn" data-ms-order-down="${pos}" ${isLast ? 'disabled' : ''} aria-label="Descer foto" title="Descer">↓</button>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
     };
 
     const redraw = async () => {
@@ -1803,6 +1926,7 @@ export async function openDayMuralStudio(rawEntry, { onToast, onOpenLightbox } =
       syncStudioLabels(isScrollable);
     };
     refreshCanvas = redraw;
+    syncPhotoOrderUI();
     redraw();
 
     screen.querySelector('#ms-close')?.addEventListener('click', closeStudio);
@@ -1837,6 +1961,15 @@ export async function openDayMuralStudio(rawEntry, { onToast, onOpenLightbox } =
       });
     });
 
+    const sigToggleBtn = screen.querySelector('#ms-signature-toggle');
+    sigToggleBtn?.addEventListener('click', () => {
+      state.showSignature = !state.showSignature;
+      sigToggleBtn.classList.toggle('active', state.showSignature);
+      sigToggleBtn.setAttribute('aria-pressed', state.showSignature ? 'true' : 'false');
+      sigToggleBtn.textContent = state.showSignature ? 'Ativada' : 'Oculta';
+      redraw();
+    });
+
     screen.querySelectorAll('[data-ms-font]').forEach((btn) => {
       btn.addEventListener('click', () => {
         state.fontMode = btn.dataset.msFont;
@@ -1857,12 +1990,44 @@ export async function openDayMuralStudio(rawEntry, { onToast, onOpenLightbox } =
     screen.querySelectorAll('[data-ms-photo]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const idx = Number(btn.dataset.msPhoto);
-        if (state.selectedPhotoIds.has(idx)) state.selectedPhotoIds.delete(idx);
-        else state.selectedPhotoIds.add(idx);
-        btn.classList.toggle('selected', state.selectedPhotoIds.has(idx));
-        btn.querySelector('.mp-check').innerHTML = state.selectedPhotoIds.has(idx) ? ICONS.check : '';
+        const existingPos = state.selectedPhotoOrder.indexOf(idx);
+        if (existingPos !== -1) state.selectedPhotoOrder.splice(existingPos, 1);
+        else state.selectedPhotoOrder.push(idx);
+        syncPhotoOrderUI();
         redraw();
       });
+    });
+
+    screen.querySelector('#ms-photo-order-wrap')?.addEventListener('click', (e) => {
+      const topBtn = e.target.closest('[data-ms-order-top]');
+      const upBtn = e.target.closest('[data-ms-order-up]');
+      const downBtn = e.target.closest('[data-ms-order-down]');
+
+      if (topBtn) {
+        const pos = Number(topBtn.dataset.msOrderTop);
+        if (pos > 0 && pos < state.selectedPhotoOrder.length) {
+          const [moved] = state.selectedPhotoOrder.splice(pos, 1);
+          state.selectedPhotoOrder.unshift(moved);
+          syncPhotoOrderUI();
+          redraw();
+        }
+      } else if (upBtn) {
+        const pos = Number(upBtn.dataset.msOrderUp);
+        if (pos > 0 && pos < state.selectedPhotoOrder.length) {
+          const arr = state.selectedPhotoOrder;
+          [arr[pos - 1], arr[pos]] = [arr[pos], arr[pos - 1]];
+          syncPhotoOrderUI();
+          redraw();
+        }
+      } else if (downBtn) {
+        const pos = Number(downBtn.dataset.msOrderDown);
+        if (pos >= 0 && pos < state.selectedPhotoOrder.length - 1) {
+          const arr = state.selectedPhotoOrder;
+          [arr[pos], arr[pos + 1]] = [arr[pos + 1], arr[pos]];
+          syncPhotoOrderUI();
+          redraw();
+        }
+      }
     });
 
     screen.querySelectorAll('[data-ms-audio]').forEach((btn) => {
@@ -1930,7 +2095,7 @@ export async function openDayMuralStudio(rawEntry, { onToast, onOpenLightbox } =
       const { blob, exportW, exportH } = await buildHighResBlob();
       if (!blob) return;
       const url = URL.createObjectURL(blob);
-      thumbObjectUrls.push(url);
+      photoThumbUrls.push(url);
       const labelMode = state.layoutMode === 'strip' ? 'Tira Vertical' : 'Mural do Dia';
       onOpenLightbox?.([{ url, caption: `${labelMode} · ${parts.day} ${parts.monthShort} ${parts.year} (${exportW} × ${exportH} px)` }], 0);
     });
@@ -1954,6 +2119,12 @@ export async function openDayMuralStudio(rawEntry, { onToast, onOpenLightbox } =
 
   renderStudioMarkup();
   screen.classList.add('open');
+
+  document.fonts?.load('italic 600 44px "Dancing Script"').then(() => {
+    if (screen.classList.contains('open')) {
+      refreshCanvas();
+    }
+  }).catch(() => {});
 
   // Decode lightweight 720px bitmaps for live preview while recording original dimensions
   Promise.all([
