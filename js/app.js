@@ -773,7 +773,16 @@ function openEntryReader(rawEntry, initialTab = 'overview', options = {}) {
       });
 
       host.querySelector('#rd-day-mural-btn')?.addEventListener('click', () => {
-        openDayMuralStudio(entry, { onToast: showToast, onOpenLightbox: openLightbox });
+        openDayMuralStudio(entry, {
+          onToast: showToast,
+          onOpenLightbox: openLightbox,
+          onEntryUpdated: async (updated) => {
+            if (updated) {
+              entry.muralKeyPhrase = updated.muralKeyPhrase;
+            }
+            await refreshEntries();
+          }
+        });
       });
 
       host.querySelector('#rd-seal-btn')?.addEventListener('click', async () => {
@@ -1338,7 +1347,16 @@ function openPostSaveModal(rawEntry) {
 
   modal.querySelector('#ps-day-mural-btn')?.addEventListener('click', () => {
     modal.classList.remove('open');
-    openDayMuralStudio(entry, { onToast: showToast, onOpenLightbox: openLightbox });
+    openDayMuralStudio(entry, {
+      onToast: showToast,
+      onOpenLightbox: openLightbox,
+      onEntryUpdated: async (updated) => {
+        if (updated) {
+          entry.muralKeyPhrase = updated.muralKeyPhrase;
+        }
+        await refreshEntries();
+      }
+    });
   });
 
   modal.classList.add('open');

@@ -1,6 +1,6 @@
-// Diário de Bordo PWA Service Worker — v11 (Assinatura Autoral + Ordem das Fotos + 2880px)
+// Diário de Bordo PWA Service Worker — v12 (Frase-Chave / Selo do Dia + v11)
 const CACHE_PREFIX = 'diario-de-bordo-';
-const CACHE_NAME = 'diario-de-bordo-v11';
+const CACHE_NAME = 'diario-de-bordo-v12';
 const SHARE_DB_NAME = 'DiarioDeBordoShareInbox';
 const SHARE_DB_VERSION = 1;
 const SHARE_STORE = 'pending_shares';

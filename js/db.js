@@ -121,6 +121,7 @@ export function normalizeEntry(raw = {}) {
     mood: raw.mood || 'neutro',
     isMilestone: Boolean(raw.isMilestone),
     milestoneTitle: typeof raw.milestoneTitle === 'string' ? raw.milestoneTitle : '',
+    muralKeyPhrase: typeof raw.muralKeyPhrase === 'string' ? raw.muralKeyPhrase.slice(0, 80) : '',
     isSealed: Boolean(raw.isSealed),
     sealedAt: typeof raw.sealedAt === 'number' ? raw.sealedAt : null,
     authorQuote: typeof raw.authorQuote === 'string' ? raw.authorQuote : '',

@@ -5350,3 +5350,69 @@ button {
   opacity: 0.28;
   cursor: default;
 }
+
+.mural-char-counter {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.mural-keyphrase-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.mural-keyphrase-input-wrap .dark-input {
+  padding-right: 36px;
+}
+
+.mural-keyphrase-clear {
+  position: absolute;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
+  transition: background 0.15s, color 0.15s;
+}
+
+.mural-keyphrase-clear:active {
+  background: rgba(212, 180, 131, 0.22);
+  color: var(--gold-light);
+}
+
+.mural-keyphrase-clear.hidden {
+  display: none;
+}
+
+.mural-preset-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.mural-preset-chip {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: #151517;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  padding: 5px 10px;
+  border-radius: 999px;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.mural-preset-chip.active {
+  color: var(--gold-light);
+  background: var(--gold-dim);
+  border-color: rgba(212, 180, 131, 0.55);
+}

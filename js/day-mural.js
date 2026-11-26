@@ -1,5 +1,5 @@
 // High-Resolution 4-Quadrant "Mural do Dia" Poster Generator & Editable Studio
-import { normalizeEntry, formatEntryDateParts } from './db.js';
+import { normalizeEntry, formatEntryDateParts, getEntry, saveEntry } from './db.js';
 import { ICONS, getMoodById } from './icons.js';
 import { shareSingleFile, saveSingleFileToDiarioFolder } from './export.js';
 
@@ -10,6 +10,14 @@ const STRIP_W = 1440;
 const MAX_EXPORT_H = 14800;
 const SIGNATURE_TEXT = 'Hylley Medeiros';
 const SIGNATURE_FONT_STACK = "'Dancing Script', 'Brush Script MT', 'Segoe Script', 'Snell Roundhand', 'Caveat', cursive";
+const KEY_PHRASE_MAX_LEN = 60;
+const KEY_PHRASE_PRESETS = [
+  'Foco & Construção',
+  'Família & Gratidão',
+  'Virada de Chave',
+  'Flow & Criação',
+  'Dia de Superação'
+];
 
 const PALETTES = [
   {
@@ -923,6 +931,43 @@ function drawMuralFooter(ctx, {
   ctx.restore();
 }
 
+function drawKeyPhraseSeal(ctx, { x, y, maxW, text, palette, fontSize = 23, pillH = 46 }) {
+  const raw = String(text || '').trim();
+  if (!raw) return;
+
+  ctx.save();
+  const star = '✦ ';
+  ctx.font = `700 ${fontSize - 2}px "Inter", system-ui, sans-serif`;
+  const starW = ctx.measureText(star).width;
+
+  ctx.font = `600 ${fontSize}px "Inter", "Segoe UI", system-ui, sans-serif`;
+  const padX = 20;
+  const labelText = truncateLine(ctx, raw, Math.max(80, maxW - padX * 2 - starW));
+  const textW = ctx.measureText(labelText).width;
+  const pillW = Math.min(maxW, Math.ceil(padX * 2 + starW + textW));
+  const midY = y + pillH / 2 + 1;
+
+  roundRectPath(ctx, x, y, pillW, pillH, pillH / 2);
+  ctx.fillStyle = palette.q1Bg;
+  ctx.fill();
+
+  ctx.globalAlpha = 0.78;
+  ctx.lineWidth = 1.8;
+  ctx.strokeStyle = palette.accent;
+  ctx.stroke();
+
+  ctx.globalAlpha = 1;
+  ctx.textBaseline = 'middle';
+  ctx.font = `700 ${fontSize - 2}px "Inter", system-ui, sans-serif`;
+  ctx.fillStyle = palette.accent;
+  ctx.fillText(star, x + padX, midY);
+
+  ctx.font = `600 ${fontSize}px "Inter", "Segoe UI", system-ui, sans-serif`;
+  ctx.fillStyle = palette.headerText;
+  ctx.fillText(labelText, x + padX + starW, midY);
+  ctx.restore();
+}
+
 function measureQuadrantsLayout(ctx, state) {
   const palette = PALETTES.find((p) => p.id === state.paletteId) || PALETTES[0];
   const entry = state.entry;
@@ -943,7 +988,15 @@ function measureQuadrantsLayout(ctx, state) {
   const mainTitle = entry.title.trim() || `Cápsula de ${parts.day} de ${parts.monthFull}`;
   ctx.font = '700 66px "Playfair Display", Georgia, serif';
   const titleLines = wrapTextLines(ctx, mainTitle, fullW).slice(0, 2);
-  const headerDividerY = titleLines.length > 1 ? 310 : 236;
+
+  const keyPhrase = String(state.keyPhrase || '').trim().slice(0, KEY_PHRASE_MAX_LEN);
+  const keyPhraseH = 46;
+  let keyPhraseY = null;
+  let headerDividerY = titleLines.length > 1 ? 310 : 236;
+  if (keyPhrase) {
+    keyPhraseY = 132 + titleLines.length * 78 + 14;
+    headerDividerY = keyPhraseY + keyPhraseH + 24;
+  }
   const gridTop = headerDividerY + 32;
 
   const showSig = Boolean(state.showSignature);
@@ -1015,6 +1068,9 @@ function measureQuadrantsLayout(ctx, state) {
     dateHeader,
     rightMeta,
     titleLines,
+    keyPhrase,
+    keyPhraseY,
+    keyPhraseH,
     headerDividerY,
     q1,
     q2,
@@ -1061,6 +1117,18 @@ async function renderDayMuralCanvas(canvas, state, { precomputedLayout = null, h
     const str = idx === 1 && layout.titleLines.length === 2 ? truncateLine(ctx, line, layout.fullW) : line;
     ctx.fillText(str, layout.padX, 132 + idx * 78);
   });
+
+  if (layout.keyPhrase && layout.keyPhraseY != null) {
+    drawKeyPhraseSeal(ctx, {
+      x: layout.padX,
+      y: layout.keyPhraseY,
+      maxW: layout.fullW,
+      text: layout.keyPhrase,
+      palette,
+      fontSize: 23,
+      pillH: layout.keyPhraseH
+    });
+  }
 
   ctx.strokeStyle = palette.border;
   ctx.lineWidth = 2;
@@ -1120,6 +1188,14 @@ function measureVerticalStripLayout(ctx, state) {
   const titleLines = wrapTextLines(ctx, mainTitle, blockW).slice(0, 3);
   const titleLineH = 74;
   let cursorY = titleY + titleLines.length * titleLineH + 18;
+
+  const keyPhrase = String(state.keyPhrase || '').trim().slice(0, KEY_PHRASE_MAX_LEN);
+  const keyPhraseH = 46;
+  let keyPhraseY = null;
+  if (keyPhrase) {
+    keyPhraseY = cursorY;
+    cursorY += keyPhraseH + 16;
+  }
 
   // Mood / Milestone / Sealed pills
   const badges = [{ text: `Humor: ${mood.label}`, bg: palette.q1Bg, border: palette.border, fg: palette.headerText }];
@@ -1303,6 +1379,9 @@ function measureVerticalStripLayout(ctx, state) {
     titleY,
     titleLines,
     titleLineH,
+    keyPhrase,
+    keyPhraseY,
+    keyPhraseH,
     pillRows,
     pillsStartY,
     pillH,
@@ -1347,6 +1426,18 @@ async function renderVerticalStripCanvas(canvas, state, precomputedLayout = null
       : line;
     ctx.fillText(str, layout.padX, layout.titleY + idx * layout.titleLineH);
   });
+
+  if (layout.keyPhrase && layout.keyPhraseY != null) {
+    drawKeyPhraseSeal(ctx, {
+      x: layout.padX,
+      y: layout.keyPhraseY,
+      maxW: layout.blockW,
+      text: layout.keyPhrase,
+      palette,
+      fontSize: 22,
+      pillH: layout.keyPhraseH
+    });
+  }
 
   // Status Pills (Mood, Milestone, Sealed)
   ctx.font = '600 22px "Inter", system-ui, sans-serif';
@@ -1573,12 +1664,16 @@ async function renderVerticalStripCanvas(canvas, state, precomputedLayout = null
 // ============================================================================
 // Editable Studio UI (#day-mural-screen)
 // ============================================================================
-export async function openDayMuralStudio(rawEntry, { onToast, onOpenLightbox } = {}) {
+export async function openDayMuralStudio(rawEntry, { onToast, onOpenLightbox, onEntryUpdated } = {}) {
   const screen = document.getElementById('day-mural-screen');
   if (!screen) return;
 
   const entry = normalizeEntry(rawEntry);
   const parts = formatEntryDateParts(entry.dateKey, entry.timeStr);
+  const initialKeyPhrase = (entry.muralKeyPhrase || '').trim().slice(0, KEY_PHRASE_MAX_LEN);
+  let lastSavedKeyPhrase = initialKeyPhrase;
+  let persistTimer = null;
+  let persistQueue = Promise.resolve();
 
   const state = {
     entry,
@@ -1587,6 +1682,7 @@ export async function openDayMuralStudio(rawEntry, { onToast, onOpenLightbox } =
     fontMode: 'auto',
     format: 'png', // 'png' | 'jpeg'
     showSignature: true,
+    keyPhrase: initialKeyPhrase,
     narrativeText: buildInitialNarrative(entry),
     photos: entry.photos.map((p) => ({ ...p, bitmap: null, naturalWidth: 0, naturalHeight: 0 })),
     audios: entry.audios.map((a) => ({ ...a })),
@@ -1599,6 +1695,33 @@ export async function openDayMuralStudio(rawEntry, { onToast, onOpenLightbox } =
   let photoThumbUrls = [];
   let refreshCanvas = () => {};
   let renderSeq = 0;
+
+  const persistKeyPhrase = () => {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+    const cleaned = String(state.keyPhrase || '').trim().slice(0, KEY_PHRASE_MAX_LEN);
+    if (cleaned === lastSavedKeyPhrase) return persistQueue;
+    lastSavedKeyPhrase = cleaned;
+    persistQueue = persistQueue.then(async () => {
+      try {
+        const fresh = await getEntry(entry.id);
+        if (!fresh || fresh.muralKeyPhrase === cleaned) return;
+        const updated = await saveEntry({ ...fresh, muralKeyPhrase: cleaned });
+        entry.muralKeyPhrase = cleaned;
+        await onEntryUpdated?.(updated);
+      } catch {
+        // Non-blocking persistence failure; mural generation still proceeds
+      }
+    });
+    return persistQueue;
+  };
+
+  const schedulePersistKeyPhrase = () => {
+    clearTimeout(persistTimer);
+    persistTimer = setTimeout(() => {
+      persistKeyPhrase();
+    }, 320);
+  };
 
   const revokeThumbUrls = () => {
     photoThumbUrls.forEach((u) => URL.revokeObjectURL(u));
@@ -1627,6 +1750,7 @@ export async function openDayMuralStudio(rawEntry, { onToast, onOpenLightbox } =
 
   const closeStudio = () => {
     renderSeq++;
+    persistKeyPhrase();
     revokeThumbUrls();
     releasePreviewMedia();
     screen.classList.remove('open');
@@ -1741,6 +1865,40 @@ export async function openDayMuralStudio(rawEntry, { onToast, onOpenLightbox } =
                 <button type="button" class="mural-toggle-pill ${state.showSignature ? 'active' : ''}" id="ms-signature-toggle" aria-pressed="${state.showSignature ? 'true' : 'false'}">
                   ${state.showSignature ? 'Ativada' : 'Oculta'}
                 </button>
+              </div>
+            </section>
+
+            <!-- Optional Key Phrase / Day Seal -->
+            <section class="card mural-control-card">
+              <div class="section-row-between">
+                <label class="field-label" for="ms-keyphrase-input">Frase-Chave / Selo do Dia (Opcional)</label>
+                <span class="mural-char-counter" id="ms-keyphrase-count">${state.keyPhrase.length}/${KEY_PHRASE_MAX_LEN}</span>
+              </div>
+              <div class="mural-keyphrase-input-wrap">
+                <input
+                  type="text"
+                  id="ms-keyphrase-input"
+                  class="dark-input"
+                  maxlength="${KEY_PHRASE_MAX_LEN}"
+                  value="${escapeHtml(state.keyPhrase)}"
+                  placeholder="Ex.: Sorocaba • Virada de chave"
+                >
+                <button
+                  type="button"
+                  class="mural-keyphrase-clear ${state.keyPhrase ? '' : 'hidden'}"
+                  id="ms-keyphrase-clear"
+                  aria-label="Limpar frase-chave"
+                  title="Limpar"
+                >×</button>
+              </div>
+              <div class="mural-preset-chips" id="ms-keyphrase-presets">
+                ${KEY_PHRASE_PRESETS.map((preset) => `
+                  <button
+                    type="button"
+                    class="mural-preset-chip ${state.keyPhrase.trim() === preset ? 'active' : ''}"
+                    data-ms-preset="${escapeHtml(preset)}"
+                  >${escapeHtml(preset)}</button>
+                `).join('')}
               </div>
             </section>
 
@@ -1970,6 +2128,56 @@ export async function openDayMuralStudio(rawEntry, { onToast, onOpenLightbox } =
       redraw();
     });
 
+    const keyPhraseInput = screen.querySelector('#ms-keyphrase-input');
+    const keyPhraseCount = screen.querySelector('#ms-keyphrase-count');
+    const keyPhraseClear = screen.querySelector('#ms-keyphrase-clear');
+    const keyPhrasePresets = screen.querySelector('#ms-keyphrase-presets');
+    let kpRenderTimer = null;
+
+    const syncKeyPhraseUI = () => {
+      const len = String(state.keyPhrase || '').length;
+      const trimmed = String(state.keyPhrase || '').trim();
+      if (keyPhraseInput && keyPhraseInput.value !== state.keyPhrase) {
+        keyPhraseInput.value = state.keyPhrase;
+      }
+      if (keyPhraseCount) {
+        keyPhraseCount.textContent = `${len}/${KEY_PHRASE_MAX_LEN}`;
+      }
+      if (keyPhraseClear) {
+        keyPhraseClear.classList.toggle('hidden', len === 0);
+      }
+      keyPhrasePresets?.querySelectorAll('[data-ms-preset]').forEach((btn) => {
+        btn.classList.toggle('active', trimmed === btn.dataset.msPreset);
+      });
+    };
+
+    keyPhraseInput?.addEventListener('input', (e) => {
+      state.keyPhrase = e.target.value.slice(0, KEY_PHRASE_MAX_LEN);
+      syncKeyPhraseUI();
+      clearTimeout(kpRenderTimer);
+      kpRenderTimer = setTimeout(redraw, 90);
+      schedulePersistKeyPhrase();
+    });
+
+    keyPhraseClear?.addEventListener('click', () => {
+      state.keyPhrase = '';
+      clearTimeout(kpRenderTimer);
+      syncKeyPhraseUI();
+      redraw();
+      persistKeyPhrase();
+    });
+
+    keyPhrasePresets?.addEventListener('click', (e) => {
+      const presetBtn = e.target.closest('[data-ms-preset]');
+      if (!presetBtn) return;
+      const preset = presetBtn.dataset.msPreset || '';
+      state.keyPhrase = state.keyPhrase.trim() === preset ? '' : preset;
+      clearTimeout(kpRenderTimer);
+      syncKeyPhraseUI();
+      redraw();
+      persistKeyPhrase();
+    });
+
     screen.querySelectorAll('[data-ms-font]').forEach((btn) => {
       btn.addEventListener('click', () => {
         state.fontMode = btn.dataset.msFont;
@@ -2051,6 +2259,7 @@ export async function openDayMuralStudio(rawEntry, { onToast, onOpenLightbox } =
     });
 
     const buildHighResBlob = async () => {
+      await persistKeyPhrase();
       const hiCanvas = document.createElement('canvas');
       let exportW = EXPORT_QUAD_W;
       let exportH = Math.round(BASE_POSTER_H * (EXPORT_QUAD_W / POSTER_W));
