@@ -4,7 +4,10 @@ import { ICONS, getMoodById } from './icons.js';
 import { shareSingleFile, saveSingleFileToDiarioFolder } from './export.js';
 
 const POSTER_W = 2160;
-const POSTER_H = 2700;
+const BASE_POSTER_H = 2700;
+const EXPORT_QUAD_W = 2880;
+const STRIP_W = 1440;
+const MAX_EXPORT_H = 14800;
 
 const PALETTES = [
   {
@@ -135,7 +138,17 @@ function buildInitialNarrative(entry) {
   return parts.join('\n\n');
 }
 
-function loadBitmapFromBlob(blob) {
+function closeBitmap(bmp) {
+  if (bmp && typeof bmp.close === 'function') {
+    try {
+      bmp.close();
+    } catch {
+      // already closed or detached
+    }
+  }
+}
+
+function loadImageElementFromBlob(blob) {
   return new Promise((resolve) => {
     if (!blob) return resolve(null);
     const url = URL.createObjectURL(blob);
@@ -150,6 +163,59 @@ function loadBitmapFromBlob(blob) {
     };
     img.src = url;
   });
+}
+
+async function decodePreviewBitmap(blob, maxSide = 720) {
+  if (!blob) return { bitmap: null, width: 0, height: 0 };
+  let full = null;
+  if (typeof createImageBitmap === 'function') {
+    try {
+      full = await createImageBitmap(blob);
+    } catch {
+      full = null;
+    }
+  }
+  if (!full) {
+    full = await loadImageElementFromBlob(blob);
+  }
+  if (!full) return { bitmap: null, width: 0, height: 0 };
+
+  const origW = full.naturalWidth || full.width || 0;
+  const origH = full.naturalHeight || full.height || 0;
+  if (!origW || !origH) {
+    closeBitmap(full);
+    return { bitmap: null, width: 0, height: 0 };
+  }
+
+  const longest = Math.max(origW, origH);
+  if (longest <= maxSide) {
+    return { bitmap: full, width: origW, height: origH };
+  }
+
+  const scale = maxSide / longest;
+  const cw = Math.max(1, Math.round(origW * scale));
+  const ch = Math.max(1, Math.round(origH * scale));
+  const c = document.createElement('canvas');
+  c.width = cw;
+  c.height = ch;
+  const cx = c.getContext('2d');
+  cx.imageSmoothingEnabled = true;
+  cx.imageSmoothingQuality = 'high';
+  cx.drawImage(full, 0, 0, cw, ch);
+  closeBitmap(full);
+  return { bitmap: c, width: origW, height: origH };
+}
+
+async function decodeOriginalBitmap(blob) {
+  if (!blob) return null;
+  if (typeof createImageBitmap === 'function') {
+    try {
+      return await createImageBitmap(blob);
+    } catch {
+      // Fallback to HTMLImageElement if createImageBitmap rejects format/EXIF
+    }
+  }
+  return loadImageElementFromBlob(blob);
 }
 
 function extractVideoThumbnail(blob) {
@@ -241,6 +307,8 @@ function drawCoverImage(ctx, imgSource, x, y, w, h, radius = 18) {
   const sw = imgSource.videoWidth || imgSource.naturalWidth || imgSource.width;
   const sh = imgSource.videoHeight || imgSource.naturalHeight || imgSource.height;
   if (sw && sh) {
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
     const scale = Math.max(w / sw, h / sh);
     const dw = sw * scale;
     const dh = sh * scale;
@@ -412,7 +480,71 @@ function drawTextQuadrant(ctx, rect, palette, narrativeText, fontMode) {
   ctx.restore();
 }
 
-function drawPhotosQuadrant(ctx, rect, palette, photoEntries) {
+function distributeRows(x, y, w, h, rowSpecs, g = 16) {
+  const numRows = rowSpecs.length;
+  if (numRows === 0) return [];
+  const totalGaps = Math.max(0, numRows - 1) * g;
+  const availH = Math.max(60, h - totalGaps);
+  const weightSum = rowSpecs.reduce((acc, r) => acc + r.weight, 0);
+  const slots = [];
+  let curY = y;
+  let usedH = 0;
+
+  rowSpecs.forEach((spec, rIdx) => {
+    const rowH = rIdx === numRows - 1
+      ? Math.max(40, availH - usedH)
+      : Math.round((availH * spec.weight) / weightSum);
+    usedH += rowH;
+
+    const cols = spec.cols;
+    const colW = (w - (cols - 1) * g) / cols;
+    for (let c = 0; c < cols; c++) {
+      slots.push({
+        x: x + c * (colW + g),
+        y: curY,
+        w: colW,
+        h: rowH
+      });
+    }
+    curY += rowH + g;
+  });
+
+  return slots;
+}
+
+function computePhotoGridSlots(x, y, w, h, count, g = 16) {
+  if (count <= 0) return [];
+  if (count === 1) return distributeRows(x, y, w, h, [{ cols: 1, weight: 1 }], g);
+  if (count === 2) return distributeRows(x, y, w, h, [{ cols: 1, weight: 1 }, { cols: 1, weight: 1 }], g);
+  if (count === 3) return distributeRows(x, y, w, h, [{ cols: 1, weight: 52 }, { cols: 2, weight: 48 }], g);
+  if (count === 4) return distributeRows(x, y, w, h, [{ cols: 2, weight: 1 }, { cols: 2, weight: 1 }], g);
+  if (count === 5) return distributeRows(x, y, w, h, [{ cols: 1, weight: 44 }, { cols: 2, weight: 28 }, { cols: 2, weight: 28 }], g);
+  if (count === 6) return distributeRows(x, y, w, h, [{ cols: 2, weight: 1 }, { cols: 2, weight: 1 }, { cols: 2, weight: 1 }], g);
+  if (count === 7) return distributeRows(x, y, w, h, [{ cols: 1, weight: 32 }, { cols: 2, weight: 22.66 }, { cols: 2, weight: 22.66 }, { cols: 2, weight: 22.68 }], g);
+  if (count === 8) return distributeRows(x, y, w, h, [{ cols: 1, weight: 28 }, { cols: 2, weight: 25 }, { cols: 2, weight: 25 }, { cols: 3, weight: 22 }], g);
+  if (count === 9) return distributeRows(x, y, w, h, [{ cols: 1, weight: 28 }, { cols: 2, weight: 18 }, { cols: 2, weight: 18 }, { cols: 2, weight: 18 }, { cols: 2, weight: 18 }], g);
+
+  const rem = count - 1;
+  const hasThreeRow = rem % 2 === 1;
+  const twoRows = hasThreeRow ? Math.max(0, (rem - 3) / 2) : rem / 2;
+  const specs = [{ cols: 1, weight: 540 }];
+  for (let i = 0; i < twoRows; i++) specs.push({ cols: 2, weight: 420 });
+  if (hasThreeRow) specs.push({ cols: 3, weight: 340 });
+  return distributeRows(x, y, w, h, specs, g);
+}
+
+function computeMinPhotosQuadrantHeight(count) {
+  if (count <= 6) return 0;
+  if (count === 7) return 1640;
+  if (count === 8) return 1780;
+  if (count === 9) return 1940;
+  const rem = count - 1;
+  const hasThreeRow = rem % 2 === 1;
+  const twoRows = hasThreeRow ? Math.max(0, (rem - 3) / 2) : rem / 2;
+  return 160 + 540 + twoRows * 420 + (hasThreeRow ? 340 : 0) + (twoRows + (hasThreeRow ? 1 : 0)) * 16;
+}
+
+async function drawPhotosQuadrant(ctx, rect, palette, photoEntries, { highRes = false } = {}) {
   const total = photoEntries.length;
   drawQuadrantBox(
     ctx,
@@ -438,81 +570,130 @@ function drawPhotosQuadrant(ctx, rect, palette, photoEntries) {
   const h = rect.h - 160;
   const g = 16;
 
-  const visible = photoEntries.slice(0, 6);
-  const slots = [];
+  const slots = computePhotoGridSlots(x, y, w, h, total, g);
 
-  if (visible.length === 1) {
-    slots.push({ x, y, w, h });
-  } else if (visible.length === 2) {
-    const rowH = (h - g) / 2;
-    slots.push({ x, y, w, h: rowH });
-    slots.push({ x, y: y + rowH + g, w, h: rowH });
-  } else if (visible.length === 3) {
-    const topH = Math.round((h - g) * 0.57);
-    const botH = h - g - topH;
-    const halfW = (w - g) / 2;
-    slots.push({ x, y, w, h: topH });
-    slots.push({ x, y: y + topH + g, w: halfW, h: botH });
-    slots.push({ x: x + halfW + g, y: y + topH + g, w: halfW, h: botH });
-  } else if (visible.length === 4) {
-    const halfW = (w - g) / 2;
-    const halfH = (h - g) / 2;
-    for (let r = 0; r < 2; r++) {
-      for (let c = 0; c < 2; c++) {
-        slots.push({ x: x + c * (halfW + g), y: y + r * (halfH + g), w: halfW, h: halfH });
-      }
-    }
-  } else if (visible.length === 5) {
-    const topH = Math.round((h - g) * 0.54);
-    const botH = h - g - topH;
-    const topW = (w - g) / 2;
-    const botW = (w - 2 * g) / 3;
-    slots.push({ x, y, w: topW, h: topH });
-    slots.push({ x: x + topW + g, y, w: topW, h: topH });
-    for (let c = 0; c < 3; c++) {
-      slots.push({ x: x + c * (botW + g), y: y + topH + g, w: botW, h: botH });
-    }
-  } else {
-    const halfW = (w - g) / 2;
-    const rowH = (h - 2 * g) / 3;
-    for (let r = 0; r < 3; r++) {
-      for (let c = 0; c < 2; c++) {
-        slots.push({ x: x + c * (halfW + g), y: y + r * (rowH + g), w: halfW, h: rowH });
-      }
-    }
-  }
+  for (let idx = 0; idx < slots.length; idx++) {
+    const slot = slots[idx];
+    const item = photoEntries[idx];
+    let drew = false;
 
-  slots.forEach((slot, idx) => {
-    const item = visible[idx];
-    if (item && item.bitmap) {
+    if (item && highRes && item.blob) {
+      const origBmp = await decodeOriginalBitmap(item.blob);
+      try {
+        if (origBmp) {
+          drawCoverImage(ctx, origBmp, slot.x, slot.y, slot.w, slot.h, 20);
+          drew = true;
+        }
+      } finally {
+        closeBitmap(origBmp);
+      }
+    } else if (item && item.bitmap) {
       drawCoverImage(ctx, item.bitmap, slot.x, slot.y, slot.w, slot.h, 20);
-    } else {
+      drew = true;
+    }
+
+    if (!drew) {
       ctx.save();
       roundRectPath(ctx, slot.x, slot.y, slot.w, slot.h, 20);
       ctx.fillStyle = 'rgba(255,255,255,0.06)';
       ctx.fill();
       ctx.restore();
     }
-
-    if (idx === slots.length - 1 && total > slots.length) {
-      const extra = total - slots.length;
-      ctx.save();
-      roundRectPath(ctx, slot.x, slot.y, slot.w, slot.h, 20);
-      ctx.fillStyle = 'rgba(10, 10, 12, 0.62)';
-      ctx.fill();
-      ctx.fillStyle = '#FFFFFF';
-      ctx.font = '800 54px "Inter", system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(`+${extra}`, slot.x + slot.w / 2, slot.y + slot.h / 2);
-      ctx.restore();
-    }
-  });
+  }
 }
 
 function formatSec(sec) {
   const s = Math.max(0, Math.floor(sec || 0));
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function drawAudioCardList(ctx, x, y, w, cardH, gap, palette, audioEntries, maxVisible = audioEntries.length, cols = 1) {
+  const total = audioEntries.length;
+  const list = audioEntries.slice(0, maxVisible);
+  const colCount = Math.max(1, cols);
+  const colGap = 18;
+  const cardW = colCount > 1 ? (w - (colCount - 1) * colGap) / colCount : w;
+
+  list.forEach((au, idx) => {
+    const col = idx % colCount;
+    const row = Math.floor(idx / colCount);
+    const cxPos = x + col * (cardW + colGap);
+    const cy = y + row * (cardH + gap);
+
+    ctx.save();
+    roundRectPath(ctx, cxPos, cy, cardW, cardH, 22);
+    ctx.fillStyle = palette.q3Card;
+    ctx.fill();
+
+    // Play circle
+    const cx = cxPos + 52;
+    const midY = cy + cardH / 2;
+    ctx.beginPath();
+    ctx.arc(cx, midY, 28, 0, Math.PI * 2);
+    ctx.fillStyle = palette.q3Badge;
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(cx - 7, midY - 11);
+    ctx.lineTo(cx + 13, midY);
+    ctx.lineTo(cx - 7, midY + 11);
+    ctx.closePath();
+    ctx.fillStyle = palette.q3Bg;
+    ctx.fill();
+
+    // Title & meta
+    const textX = cxPos + 102;
+    const durText = formatSec(au.duration || 0);
+    ctx.font = '700 25px "Inter", system-ui, sans-serif';
+    const durW = ctx.measureText(durText).width;
+    const maxTitleW = cardW - 102 - durW - 170;
+    const titleStr = (au.title || '').trim() || `Nota de áudio ${idx + 1}`;
+    ctx.fillStyle = palette.q3Text;
+    ctx.font = '700 28px "Inter", system-ui, sans-serif';
+    ctx.textBaseline = 'top';
+    const titleTopOffset = Math.round(cardH * 0.19);
+    const metaTopOffset = Math.round(cardH * 0.52);
+    ctx.fillText(truncateLine(ctx, titleStr, Math.max(120, maxTitleW)), textX, cy + titleTopOffset);
+
+    // Sub-meta
+    const dt = new Date(au.recordedAt || au.createdAt || Date.now());
+    const hhmm = `${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
+    const origin = au.source === 'file' ? 'Arquivo' : 'Gravação';
+    ctx.font = '500 21px "Inter", system-ui, sans-serif';
+    ctx.globalAlpha = 0.7;
+    ctx.fillText(`${origin} · ${hhmm}`, textX, cy + metaTopOffset);
+    ctx.globalAlpha = 1;
+
+    // Decorative waveform bars
+    const waveX = cxPos + cardW - durW - 140;
+    const heights = [12, 22, 16, 28, 19, 25, 13];
+    ctx.fillStyle = palette.q3Badge;
+    ctx.globalAlpha = 0.55;
+    heights.forEach((bh, bIdx) => {
+      const bx = waveX + bIdx * 12;
+      roundRectPath(ctx, bx, midY - bh / 2, 6, bh, 3);
+      ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+
+    // Duration pill on right
+    ctx.fillStyle = palette.q3Badge;
+    ctx.font = '700 25px "Inter", system-ui, sans-serif';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(durText, cxPos + cardW - durW - 28, midY);
+
+    ctx.restore();
+  });
+
+  if (total > maxVisible) {
+    const visibleRows = Math.ceil(list.length / colCount);
+    ctx.save();
+    ctx.fillStyle = palette.q3Badge;
+    ctx.font = '600 22px "Inter", system-ui, sans-serif';
+    ctx.textBaseline = 'top';
+    ctx.fillText(`+ ${total - maxVisible} áudio(s) adicional(is)`, x + 6, y + visibleRows * (cardH + gap) + 4);
+    ctx.restore();
+  }
 }
 
 function drawAudiosQuadrant(ctx, rect, palette, audioEntries) {
@@ -535,87 +716,10 @@ function drawAudiosQuadrant(ctx, rect, palette, audioEntries) {
     return;
   }
 
-  const x = rect.x + 42;
-  const y = rect.y + 120;
-  const w = rect.w - 84;
-  const maxVisible = 5;
-  const list = audioEntries.slice(0, maxVisible);
-  const cardH = 128;
-  const gap = 16;
-
-  list.forEach((au, idx) => {
-    const cy = y + idx * (cardH + gap);
-    ctx.save();
-    roundRectPath(ctx, x, cy, w, cardH, 22);
-    ctx.fillStyle = palette.q3Card;
-    ctx.fill();
-
-    // Play circle
-    const cx = x + 52;
-    const midY = cy + cardH / 2;
-    ctx.beginPath();
-    ctx.arc(cx, midY, 28, 0, Math.PI * 2);
-    ctx.fillStyle = palette.q3Badge;
-    ctx.fill();
-
-    ctx.beginPath();
-    ctx.moveTo(cx - 7, midY - 11);
-    ctx.lineTo(cx + 13, midY);
-    ctx.lineTo(cx - 7, midY + 11);
-    ctx.closePath();
-    ctx.fillStyle = palette.q3Bg;
-    ctx.fill();
-
-    // Title & meta
-    const textX = x + 102;
-    const durText = formatSec(au.duration || 0);
-    ctx.font = '700 25px "Inter", system-ui, sans-serif';
-    const durW = ctx.measureText(durText).width;
-    const maxTitleW = w - 102 - durW - 56;
-    const titleStr = (au.title || '').trim() || `Nota de áudio ${idx + 1}`;
-    ctx.fillStyle = palette.q3Text;
-    ctx.font = '700 28px "Inter", system-ui, sans-serif';
-    ctx.textBaseline = 'top';
-    ctx.fillText(truncateLine(ctx, titleStr, maxTitleW), textX, cy + 24);
-
-    // Sub-meta + mini waveform bars
-    const dt = new Date(au.recordedAt || au.createdAt || Date.now());
-    const hhmm = `${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
-    const origin = au.source === 'file' ? 'Arquivo' : 'Gravação';
-    ctx.font = '500 21px "Inter", system-ui, sans-serif';
-    ctx.globalAlpha = 0.7;
-    ctx.fillText(`${origin} · ${hhmm}`, textX, cy + 66);
-    ctx.globalAlpha = 1;
-
-    // Decorative waveform bars
-    const waveX = x + w - durW - 140;
-    const heights = [12, 22, 16, 28, 19, 25, 13];
-    ctx.fillStyle = palette.q3Badge;
-    ctx.globalAlpha = 0.55;
-    heights.forEach((bh, bIdx) => {
-      const bx = waveX + bIdx * 12;
-      roundRectPath(ctx, bx, midY - bh / 2, 6, bh, 3);
-      ctx.fill();
-    });
-    ctx.globalAlpha = 1;
-
-    // Duration pill on right
-    ctx.fillStyle = palette.q3Badge;
-    ctx.font = '700 25px "Inter", system-ui, sans-serif';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(durText, x + w - durW - 28, midY);
-
-    ctx.restore();
-  });
-
-  if (total > maxVisible) {
-    ctx.save();
-    ctx.fillStyle = palette.q3Badge;
-    ctx.font = '600 22px "Inter", system-ui, sans-serif';
-    ctx.textBaseline = 'top';
-    ctx.fillText(`+ ${total - maxVisible} áudio(s) adicional(is)`, x + 6, y + maxVisible * (cardH + gap) + 4);
-    ctx.restore();
-  }
+  const cols = rect.cols || 1;
+  const maxVisible = rect.maxVisible || (cols === 2 ? 8 : 5);
+  const cardH = rect.cardH || 118;
+  drawAudioCardList(ctx, rect.x + 42, rect.y + 116, rect.w - 84, cardH, 16, palette, audioEntries, maxVisible, cols);
 }
 
 function drawVideosQuadrant(ctx, rect, palette, videoEntries) {
@@ -639,20 +743,42 @@ function drawVideosQuadrant(ctx, rect, palette, videoEntries) {
   }
 
   const x = rect.x + 42;
-  const y = rect.y + 120;
+  const y = rect.y + 118;
   const w = rect.w - 84;
-  const h = rect.h - 162;
+  const h = rect.h - 158;
   const g = 16;
 
-  const visible = videoEntries.slice(0, 4);
+  const isFullWidth = Boolean(rect.fullWidth);
+  const maxVis = isFullWidth ? 6 : 4;
+  const visible = videoEntries.slice(0, maxVis);
   const slots = [];
 
-  if (visible.length === 1) {
+  if (isFullWidth) {
+    if (visible.length <= 4) {
+      const cols = visible.length;
+      const slotW = (w - (cols - 1) * g) / cols;
+      for (let c = 0; c < cols; c++) {
+        slots.push({ x: x + c * (slotW + g), y, w: slotW, h });
+      }
+    } else {
+      const cols = 3;
+      const rows = 2;
+      const slotW = (w - 2 * g) / 3;
+      const slotH = (h - g) / 2;
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          if (r * cols + c < visible.length) {
+            slots.push({ x: x + c * (slotW + g), y: y + r * (slotH + g), w: slotW, h: slotH });
+          }
+        }
+      }
+    }
+  } else if (visible.length === 1) {
     slots.push({ x, y, w, h });
   } else if (visible.length === 2) {
-    const rowH = (h - g) / 2;
-    slots.push({ x, y, w, h: rowH });
-    slots.push({ x, y: y + rowH + g, w, h: rowH });
+    const halfW = (w - g) / 2;
+    slots.push({ x, y, w: halfW, h });
+    slots.push({ x: x + halfW + g, y, w: halfW, h });
   } else if (visible.length === 3) {
     const topH = Math.round((h - g) * 0.56);
     const botH = h - g - topH;
@@ -732,93 +858,664 @@ function drawVideosQuadrant(ctx, rect, palette, videoEntries) {
   });
 }
 
-function renderDayMuralCanvas(canvas, state) {
-  const ctx = canvas.getContext('2d');
-  const scale = canvas.width / POSTER_W;
+function measureQuadrantsLayout(ctx, state) {
   const palette = PALETTES.find((p) => p.id === state.paletteId) || PALETTES[0];
   const entry = state.entry;
   const parts = formatEntryDateParts(entry.dateKey, entry.timeStr);
   const mood = getMoodById(entry.mood);
 
-  ctx.save();
-  ctx.scale(scale, scale);
-
-  // 1. Poster Background
-  ctx.fillStyle = palette.bg;
-  ctx.fillRect(0, 0, POSTER_W, POSTER_H);
-
-  // 2. Editorial Header
   const padX = 88;
-  const metaY = 78;
-  ctx.font = '700 24px "Inter", system-ui, sans-serif';
-  ctx.fillStyle = palette.accent;
-  ctx.textBaseline = 'top';
-  const dateHeader = `${parts.day} DE ${parts.monthFull.toUpperCase()} DE ${parts.year}  ·  ${parts.weekday.toUpperCase()}  ·  ${parts.time}`;
-  ctx.fillText(dateHeader, padX, metaY);
+  const fullW = POSTER_W - padX * 2; // 1984
+  const gap = 28;
+  const colW = (fullW - gap) / 2; // 978
 
-  // Mood + Milestone on right of meta row
+  // 1. Dynamic Header
+  const metaY = 78;
+  const dateHeader = `${parts.day} DE ${parts.monthFull.toUpperCase()} DE ${parts.year}  ·  ${parts.weekday.toUpperCase()}  ·  ${parts.time}`;
   const rightMeta = entry.isMilestone
     ? `★ ${(entry.milestoneTitle || 'Evento Marcante').trim()}  ·  ${mood.label}`
     : `Humor: ${mood.label}`;
-  ctx.font = '600 23px "Inter", system-ui, sans-serif';
-  ctx.fillStyle = palette.headerSub;
-  const rightW = ctx.measureText(rightMeta).width;
-  ctx.fillText(truncateLine(ctx, rightMeta, 780), POSTER_W - padX - Math.min(rightW, 780), metaY);
-
-  // Main Day Title
   const mainTitle = entry.title.trim() || `Cápsula de ${parts.day} de ${parts.monthFull}`;
   ctx.font = '700 66px "Playfair Display", Georgia, serif';
-  ctx.fillStyle = palette.headerText;
-  const titleLines = wrapTextLines(ctx, mainTitle, POSTER_W - padX * 2).slice(0, 2);
-  titleLines.forEach((line, idx) => {
-    const str = idx === 1 && titleLines.length === 2 ? truncateLine(ctx, line, POSTER_W - padX * 2) : line;
-    ctx.fillText(str, padX, 132 + idx * 78);
-  });
+  const titleLines = wrapTextLines(ctx, mainTitle, fullW).slice(0, 2);
+  const headerDividerY = titleLines.length > 1 ? 310 : 236;
+  const gridTop = headerDividerY + 32;
 
-  // Header divider
-  ctx.strokeStyle = palette.border;
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(padX, 316);
-  ctx.lineTo(POSTER_W - padX, 316);
-  ctx.stroke();
-
-  // 3. Four Quadrant Grid Geometry
-  const gap = 28;
-  const gridTop = 348;
-  const gridBottom = 2566;
-  const gridH = gridBottom - gridTop;
-  const colW = (POSTER_W - padX * 2 - gap) / 2; // 978
-  const rowHTop = 1234;
-  const rowHBot = gridH - gap - rowHTop; // 956
-
-  const q1 = { x: padX, y: gridTop, w: colW, h: rowHTop };
-  const q2 = { x: padX + colW + gap, y: gridTop, w: colW, h: rowHTop };
-  const q3 = { x: padX, y: gridTop + rowHTop + gap, w: colW, h: rowHBot };
-  const q4 = { x: padX + colW + gap, y: gridTop + rowHTop + gap, w: colW, h: rowHBot };
-
+  const footerH = 104;
   const selectedPhotos = state.photos.filter((_, i) => state.selectedPhotoIds.has(i));
   const selectedAudios = state.audios.filter((_, i) => state.selectedAudioIds.has(i));
   const selectedVideos = state.videos.filter((_, i) => state.selectedVideoIds.has(i));
 
-  drawTextQuadrant(ctx, q1, palette, state.narrativeText, state.fontMode);
-  drawPhotosQuadrant(ctx, q2, palette, selectedPhotos);
-  drawAudiosQuadrant(ctx, q3, palette, selectedAudios);
-  drawVideosQuadrant(ctx, q4, palette, selectedVideos);
+  const minPhotosH = computeMinPhotosQuadrantHeight(selectedPhotos.length);
+  const hasAudios = selectedAudios.length > 0;
+  const hasVideos = selectedVideos.length > 0;
 
-  // 4. Footer
-  const footY = 2608;
-  if (entry.tags.length > 0) {
-    ctx.font = '600 23px "Inter", system-ui, sans-serif';
-    ctx.fillStyle = palette.headerSub;
-    const tagsStr = entry.tags.slice(0, 5).map((t) => `#${t}`).join('   ');
-    ctx.fillText(truncateLine(ctx, tagsStr, 1200), padX, footY);
+  let rowHTop;
+  let q3 = null;
+  let q4 = null;
+  let gridBottom;
+
+  if (!hasAudios && !hasVideos) {
+    // Expand top row to fill ~88%+ of poster height with zero empty bottom gap
+    rowHTop = Math.max(minPhotosH, BASE_POSTER_H - gridTop - footerH);
+    gridBottom = gridTop + rowHTop;
+  } else if (hasAudios && !hasVideos) {
+    const audioCols = selectedAudios.length === 1 ? 1 : 2;
+    const audioMaxVis = 8;
+    const audioCardH = 114;
+    const audioRows = Math.ceil(Math.min(selectedAudios.length, audioMaxVis) / audioCols);
+    const extraNoteH = selectedAudios.length > audioMaxVis ? 36 : 0;
+    const rowHBot = Math.min(720, Math.max(270, 116 + audioRows * audioCardH + Math.max(0, audioRows - 1) * 16 + extraNoteH + 40));
+    rowHTop = Math.max(minPhotosH, 1280, BASE_POSTER_H - gridTop - gap - rowHBot - footerH);
+    const botY = gridTop + rowHTop + gap;
+    q3 = { x: padX, y: botY, w: fullW, h: rowHBot, cols: audioCols, maxVisible: audioMaxVis, cardH: audioCardH };
+    gridBottom = botY + rowHBot;
+  } else if (!hasAudios && hasVideos) {
+    const vc = selectedVideos.length;
+    const rowHBot = vc === 1 ? 574 : vc === 2 ? 534 : vc === 3 ? 494 : vc === 4 ? 464 : 750;
+    rowHTop = Math.max(minPhotosH, 1280, BASE_POSTER_H - gridTop - gap - rowHBot - footerH);
+    const botY = gridTop + rowHTop + gap;
+    q4 = { x: padX, y: botY, w: fullW, h: rowHBot, fullWidth: true };
+    gridBottom = botY + rowHBot;
+  } else {
+    const audioCardH = 116;
+    const audioRows = Math.min(selectedAudios.length, 5);
+    const extraNoteH = selectedAudios.length > 5 ? 34 : 0;
+    const audioNeedH = 116 + audioRows * audioCardH + Math.max(0, audioRows - 1) * 16 + extraNoteH + 40;
+    const vc = selectedVideos.length;
+    const videoNeedH = vc === 1 ? 540 : vc === 2 ? 480 : 660;
+    const rowHBot = Math.min(860, Math.max(420, audioNeedH, videoNeedH));
+    rowHTop = Math.max(minPhotosH, 1280, BASE_POSTER_H - gridTop - gap - rowHBot - footerH);
+    const botY = gridTop + rowHTop + gap;
+    q3 = { x: padX, y: botY, w: colW, h: rowHBot, cols: 1, maxVisible: 5, cardH: audioCardH };
+    q4 = { x: padX + colW + gap, y: botY, w: colW, h: rowHBot, fullWidth: false };
+    gridBottom = botY + rowHBot;
   }
+
+  const q1 = { x: padX, y: gridTop, w: colW, h: rowHTop };
+  const q2 = { x: padX + colW + gap, y: gridTop, w: colW, h: rowHTop };
+
+  const footerDividerY = gridBottom + 24;
+  const footY = footerDividerY + 26;
+  const totalH = footY + 54;
+
+  return {
+    palette,
+    entry,
+    parts,
+    padX,
+    fullW,
+    metaY,
+    dateHeader,
+    rightMeta,
+    titleLines,
+    headerDividerY,
+    q1,
+    q2,
+    q3,
+    q4,
+    selectedPhotos,
+    selectedAudios,
+    selectedVideos,
+    footerDividerY,
+    footY,
+    totalH
+  };
+}
+
+async function renderDayMuralCanvas(canvas, state, { precomputedLayout = null, highRes = false } = {}) {
+  const ctx = canvas.getContext('2d');
+  const layout = precomputedLayout || measureQuadrantsLayout(ctx, state);
+  const { palette, entry, parts } = layout;
+  const scale = canvas.width / POSTER_W;
+
+  ctx.save();
+  ctx.scale(scale, scale);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+
+  // 1. Poster Background
+  ctx.fillStyle = palette.bg;
+  ctx.fillRect(0, 0, POSTER_W, layout.totalH);
+
+  // 2. Editorial Header
+  ctx.font = '700 24px "Inter", system-ui, sans-serif';
+  ctx.fillStyle = palette.accent;
+  ctx.textBaseline = 'top';
+  ctx.fillText(layout.dateHeader, layout.padX, layout.metaY);
+
+  ctx.font = '600 23px "Inter", system-ui, sans-serif';
+  ctx.fillStyle = palette.headerSub;
+  const rightW = ctx.measureText(layout.rightMeta).width;
+  ctx.fillText(truncateLine(ctx, layout.rightMeta, 780), POSTER_W - layout.padX - Math.min(rightW, 780), layout.metaY);
+
+  ctx.font = '700 66px "Playfair Display", Georgia, serif';
+  ctx.fillStyle = palette.headerText;
+  layout.titleLines.forEach((line, idx) => {
+    const str = idx === 1 && layout.titleLines.length === 2 ? truncateLine(ctx, line, layout.fullW) : line;
+    ctx.fillText(str, layout.padX, 132 + idx * 78);
+  });
+
+  ctx.strokeStyle = palette.border;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(layout.padX, layout.headerDividerY);
+  ctx.lineTo(POSTER_W - layout.padX, layout.headerDividerY);
+  ctx.stroke();
+
+  // 3. Adaptive Quadrants
+  drawTextQuadrant(ctx, layout.q1, palette, state.narrativeText, state.fontMode);
+  await drawPhotosQuadrant(ctx, layout.q2, palette, layout.selectedPhotos, { highRes });
+  if (layout.q3) {
+    drawAudiosQuadrant(ctx, layout.q3, palette, layout.selectedAudios);
+  }
+  if (layout.q4) {
+    drawVideosQuadrant(ctx, layout.q4, palette, layout.selectedVideos);
+  }
+
+  // 4. Thin Elegant Footer
+  ctx.strokeStyle = palette.border;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(layout.padX, layout.footerDividerY);
+  ctx.lineTo(POSTER_W - layout.padX, layout.footerDividerY);
+  ctx.stroke();
+
+  ctx.font = '600 23px "Inter", system-ui, sans-serif';
+  ctx.fillStyle = palette.headerSub;
+  ctx.textBaseline = 'top';
+  if (entry.tags.length > 0) {
+    const tagsStr = entry.tags.slice(0, 6).map((t) => `#${t}`).join('   ');
+    ctx.fillText(truncateLine(ctx, tagsStr, 1200), layout.padX, layout.footY);
+  } else {
+    const fallbackLeft = `${parts.day} ${parts.monthShort} ${parts.year} · ${parts.time}`;
+    ctx.fillText(fallbackLeft, layout.padX, layout.footY);
+  }
+
   const brand = 'DIÁRIO DE BORDO  ·  MURAL DO DIA';
   ctx.font = '700 22px "Inter", system-ui, sans-serif';
   ctx.fillStyle = palette.accent;
   const brandW = ctx.measureText(brand).width;
-  ctx.fillText(brand, POSTER_W - padX - brandW, footY);
+  ctx.fillText(brand, POSTER_W - layout.padX - brandW, layout.footY);
+
+  ctx.restore();
+}
+
+// ============================================================================
+// Continuous Vertical Strip ("Tira Vertical Contínua") Renderer
+// ============================================================================
+function measureVerticalStripLayout(ctx, state) {
+  const palette = PALETTES.find((p) => p.id === state.paletteId) || PALETTES[0];
+  const entry = state.entry;
+  const parts = formatEntryDateParts(entry.dateKey, entry.timeStr);
+  const mood = getMoodById(entry.mood);
+
+  const padX = 64;
+  const blockW = STRIP_W - padX * 2; // 1312
+  const innerPadX = 44;
+  const innerW = blockW - innerPadX * 2; // 1224
+
+  // 1. Editorial Header
+  const metaY = 72;
+  const dateHeader = `${parts.day} DE ${parts.monthFull.toUpperCase()} DE ${parts.year}  ·  ${parts.weekday.toUpperCase()}  ·  ${parts.time}`;
+  const titleY = 124;
+  const mainTitle = entry.title.trim() || `Cápsula de ${parts.day} de ${parts.monthFull}`;
+  ctx.font = '700 62px "Playfair Display", Georgia, serif';
+  const titleLines = wrapTextLines(ctx, mainTitle, blockW).slice(0, 3);
+  const titleLineH = 74;
+  let cursorY = titleY + titleLines.length * titleLineH + 18;
+
+  // Mood / Milestone / Sealed pills
+  const badges = [{ text: `Humor: ${mood.label}`, bg: palette.q1Bg, border: palette.border, fg: palette.headerText }];
+  if (entry.isMilestone) {
+    badges.push({
+      text: `★ ${(entry.milestoneTitle || 'Evento Marcante').trim()}`,
+      bg: palette.q1Bg,
+      border: palette.accent,
+      fg: palette.accent
+    });
+  }
+  if (entry.isSealed) {
+    badges.push({
+      text: '✓ Cápsula Selada',
+      bg: palette.q3Bg,
+      border: palette.q3Badge,
+      fg: palette.q3Badge
+    });
+  }
+
+  ctx.font = '600 22px "Inter", system-ui, sans-serif';
+  const pillRows = [];
+  let curRow = [];
+  let curRowW = 0;
+  for (const badge of badges) {
+    const labelText = truncateLine(ctx, badge.text, blockW - 44);
+    const pw = Math.ceil(ctx.measureText(labelText).width) + 40;
+    if (curRow.length > 0 && curRowW + 12 + pw > blockW) {
+      pillRows.push(curRow);
+      curRow = [{ ...badge, text: labelText, w: pw }];
+      curRowW = pw;
+    } else {
+      curRow.push({ ...badge, text: labelText, w: pw });
+      curRowW += (curRow.length > 1 ? 12 : 0) + pw;
+    }
+  }
+  if (curRow.length > 0) pillRows.push(curRow);
+
+  const pillsStartY = cursorY;
+  const pillH = 44;
+  const pillRowGap = 12;
+  cursorY += pillRows.length * (pillH + pillRowGap) + 12;
+  const dividerY = cursorY;
+  cursorY += 34;
+
+  // 2. Full Narrative Text Block (never cuts paragraphs)
+  const modeDef = FONT_MODES.find((f) => f.id === state.fontMode);
+  const narrativeRaw = String(state.narrativeText || '').trim();
+  let fontSize = 34;
+  if (modeDef && modeDef.size) {
+    fontSize = modeDef.size;
+  } else if (narrativeRaw.length < 240) {
+    fontSize = 38;
+  } else if (narrativeRaw.length > 1800) {
+    fontSize = 32;
+  }
+
+  const lineH = Math.round(fontSize * 1.54);
+  const paraGapH = Math.round(lineH * 0.55);
+  ctx.font = `400 ${fontSize}px "Inter", "Segoe UI", system-ui, sans-serif`;
+  const lines = narrativeRaw ? wrapTextLines(ctx, narrativeRaw, innerW) : [];
+  const textBodyH = lines.length > 0
+    ? lines.reduce((acc, ln) => acc + (ln === '' ? paraGapH : lineH), 0)
+    : 84;
+
+  const textBlock = {
+    x: padX,
+    y: cursorY,
+    w: blockW,
+    h: 116 + textBodyH + 46,
+    textStartX: padX + innerPadX,
+    textStartY: cursorY + 116,
+    fontSize,
+    lineH,
+    paraGapH,
+    lines,
+    narrativeRaw
+  };
+  cursorY += textBlock.h + 34;
+
+  // 3. Full-Width Stacked Photos Block
+  const selectedPhotos = state.photos.filter((_, i) => state.selectedPhotoIds.has(i));
+  let photosBlock = null;
+  if (selectedPhotos.length > 0) {
+    const photoGap = 28;
+    let py = cursorY + 116;
+    const items = [];
+    for (const ph of selectedPhotos) {
+      const sw = ph.naturalWidth || (ph.bitmap ? (ph.bitmap.naturalWidth || ph.bitmap.width) : 0) || ph.width || 0;
+      const sh = ph.naturalHeight || (ph.bitmap ? (ph.bitmap.naturalHeight || ph.bitmap.height) : 0) || ph.height || 0;
+      const rawRatio = sw > 0 && sh > 0 ? sh / sw : 0.75;
+      const ratio = Math.max(0.56, Math.min(1.18, rawRatio));
+      const imgH = Math.round(innerW * ratio);
+      const capStr = (ph.caption || '').trim();
+      let capLines = [];
+      if (capStr) {
+        ctx.font = '500 24px "Inter", system-ui, sans-serif';
+        capLines = wrapTextLines(ctx, capStr, innerW - 12).slice(0, 3);
+      }
+      const capH = capLines.length > 0 ? 14 + capLines.length * 34 : 0;
+      items.push({
+        photo: ph,
+        x: padX + innerPadX,
+        y: py,
+        w: innerW,
+        h: imgH,
+        capLines,
+        capY: py + imgH + 14
+      });
+      py += imgH + capH + photoGap;
+    }
+    const photosH = py - photoGap - cursorY + 44;
+    photosBlock = { x: padX, y: cursorY, w: blockW, h: photosH, items };
+    cursorY += photosH + 34;
+  }
+
+  // 4. Discreet Audios Block (only when selected)
+  const selectedAudios = state.audios.filter((_, i) => state.selectedAudioIds.has(i));
+  let audiosBlock = null;
+  if (selectedAudios.length > 0) {
+    const cardH = 112;
+    const cardGap = 16;
+    const listH = selectedAudios.length * cardH + Math.max(0, selectedAudios.length - 1) * cardGap;
+    const boxH = 112 + listH + 40;
+    audiosBlock = {
+      x: padX,
+      y: cursorY,
+      w: blockW,
+      h: boxH,
+      innerX: padX + innerPadX,
+      innerY: cursorY + 112,
+      cardH,
+      cardGap,
+      items: selectedAudios
+    };
+    cursorY += boxH + 34;
+  }
+
+  // 5. Discreet Videos Block (only when selected)
+  const selectedVideos = state.videos.filter((_, i) => state.selectedVideoIds.has(i));
+  let videosBlock = null;
+  if (selectedVideos.length > 0) {
+    const cols = selectedVideos.length === 1 ? 1 : 2;
+    const tileGap = 22;
+    const tileW = cols === 1 ? innerW : (innerW - tileGap) / 2;
+    const tileH = cols === 1 ? 520 : 380;
+    const rows = Math.ceil(selectedVideos.length / cols);
+    const gridH = rows * tileH + Math.max(0, rows - 1) * tileGap;
+    const boxH = 112 + gridH + 42;
+    videosBlock = {
+      x: padX,
+      y: cursorY,
+      w: blockW,
+      h: boxH,
+      cols,
+      tileGap,
+      tileW,
+      tileH,
+      innerX: padX + innerPadX,
+      innerY: cursorY + 112,
+      items: selectedVideos
+    };
+    cursorY += boxH + 34;
+  }
+
+  // 6. Footer
+  const footerDividerY = cursorY + 4;
+  const footY = footerDividerY + 34;
+  const totalH = footY + 76;
+
+  return {
+    palette,
+    entry,
+    parts,
+    padX,
+    blockW,
+    innerW,
+    metaY,
+    dateHeader,
+    titleY,
+    titleLines,
+    titleLineH,
+    pillRows,
+    pillsStartY,
+    pillH,
+    pillRowGap,
+    dividerY,
+    textBlock,
+    photosBlock,
+    audiosBlock,
+    videosBlock,
+    footerDividerY,
+    footY,
+    totalH
+  };
+}
+
+async function renderVerticalStripCanvas(canvas, state, precomputedLayout = null, { highRes = false } = {}) {
+  const ctx = canvas.getContext('2d');
+  const layout = precomputedLayout || measureVerticalStripLayout(ctx, state);
+  const { palette, entry } = layout;
+  const scale = canvas.width / STRIP_W;
+
+  ctx.save();
+  ctx.scale(scale, scale);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+
+  // 1. Continuous Background
+  ctx.fillStyle = palette.bg;
+  ctx.fillRect(0, 0, STRIP_W, layout.totalH);
+
+  // 2. Header Meta & Title
+  ctx.font = '700 24px "Inter", system-ui, sans-serif';
+  ctx.fillStyle = palette.accent;
+  ctx.textBaseline = 'top';
+  ctx.fillText(truncateLine(ctx, layout.dateHeader, layout.blockW), layout.padX, layout.metaY);
+
+  ctx.font = '700 62px "Playfair Display", Georgia, serif';
+  ctx.fillStyle = palette.headerText;
+  layout.titleLines.forEach((line, idx) => {
+    const str = idx === layout.titleLines.length - 1 && layout.titleLines.length === 3
+      ? truncateLine(ctx, line, layout.blockW)
+      : line;
+    ctx.fillText(str, layout.padX, layout.titleY + idx * layout.titleLineH);
+  });
+
+  // Status Pills (Mood, Milestone, Sealed)
+  ctx.font = '600 22px "Inter", system-ui, sans-serif';
+  layout.pillRows.forEach((row, rIdx) => {
+    let px = layout.padX;
+    const py = layout.pillsStartY + rIdx * (layout.pillH + layout.pillRowGap);
+    row.forEach((pill) => {
+      ctx.save();
+      roundRectPath(ctx, px, py, pill.w, layout.pillH, 22);
+      ctx.fillStyle = pill.bg;
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = pill.border;
+      ctx.stroke();
+
+      ctx.fillStyle = pill.fg;
+      ctx.textBaseline = 'middle';
+      ctx.fillText(pill.text, px + 20, py + layout.pillH / 2 + 1);
+      ctx.restore();
+      px += pill.w + 12;
+    });
+  });
+
+  ctx.strokeStyle = palette.border;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(layout.padX, layout.dividerY);
+  ctx.lineTo(STRIP_W - layout.padX, layout.dividerY);
+  ctx.stroke();
+
+  // 3. Narrative Text Block
+  const tb = layout.textBlock;
+  drawQuadrantBox(ctx, tb.x, tb.y, tb.w, tb.h, palette.q1Bg, palette.border, palette.q1Badge, 'Relato do Dia', '');
+  if (!tb.narrativeRaw) {
+    drawEmptyQuadrantHint(ctx, tb.x, tb.y, tb.w, tb.h, palette.q1Text, 'Sem relato escrito neste dia');
+  } else {
+    ctx.save();
+    ctx.font = `400 ${tb.fontSize}px "Inter", "Segoe UI", system-ui, sans-serif`;
+    ctx.fillStyle = palette.q1Text;
+    ctx.textBaseline = 'top';
+    let ly = tb.textStartY;
+    tb.lines.forEach((line) => {
+      if (line === '') {
+        ly += tb.paraGapH;
+      } else {
+        ctx.fillText(line, tb.textStartX, ly);
+        ly += tb.lineH;
+      }
+    });
+    ctx.restore();
+  }
+
+  // 4. Stacked High-Res Photos Block (streaming original blobs on export)
+  if (layout.photosBlock) {
+    const pb = layout.photosBlock;
+    drawQuadrantBox(
+      ctx,
+      pb.x,
+      pb.y,
+      pb.w,
+      pb.h,
+      palette.q2Bg,
+      palette.border,
+      palette.q2Badge,
+      'Fotos',
+      `${pb.items.length}`
+    );
+
+    for (const item of pb.items) {
+      ctx.save();
+      roundRectPath(ctx, item.x, item.y, item.w, item.h, 22);
+      ctx.fillStyle = '#121214';
+      ctx.fill();
+
+      let drew = false;
+      if (highRes && item.photo.blob) {
+        const origBmp = await decodeOriginalBitmap(item.photo.blob);
+        try {
+          if (origBmp) {
+            drawCoverImage(ctx, origBmp, item.x, item.y, item.w, item.h, 22);
+            drew = true;
+          }
+        } finally {
+          closeBitmap(origBmp);
+        }
+      } else if (item.photo.bitmap) {
+        drawCoverImage(ctx, item.photo.bitmap, item.x, item.y, item.w, item.h, 22);
+        drew = true;
+      }
+
+      if (!drew) {
+        ctx.fillStyle = palette.q2Text;
+        ctx.globalAlpha = 0.5;
+        ctx.font = '500 24px "Inter", system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('Carregando foto...', item.x + item.w / 2, item.y + item.h / 2);
+        ctx.globalAlpha = 1;
+      }
+
+      roundRectPath(ctx, item.x, item.y, item.w, item.h, 22);
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+      ctx.stroke();
+
+      if (item.capLines.length > 0) {
+        ctx.fillStyle = palette.q2Text;
+        ctx.globalAlpha = 0.85;
+        ctx.font = '500 24px "Inter", system-ui, sans-serif';
+        ctx.textBaseline = 'top';
+        ctx.textAlign = 'left';
+        item.capLines.forEach((cLine, cIdx) => {
+          ctx.fillText(cLine, item.x + 6, item.capY + cIdx * 34);
+        });
+      }
+      ctx.restore();
+    }
+  }
+
+  // 5. Discreet Audios Block
+  if (layout.audiosBlock) {
+    const ab = layout.audiosBlock;
+    drawQuadrantBox(
+      ctx,
+      ab.x,
+      ab.y,
+      ab.w,
+      ab.h,
+      palette.q3Bg,
+      palette.border,
+      palette.q3Badge,
+      'Áudios',
+      `${ab.items.length}`
+    );
+    drawAudioCardList(ctx, ab.innerX, ab.innerY, layout.innerW, ab.cardH, ab.cardGap, palette, ab.items, ab.items.length);
+  }
+
+  // 6. Discreet Videos Block
+  if (layout.videosBlock) {
+    const vb = layout.videosBlock;
+    drawQuadrantBox(
+      ctx,
+      vb.x,
+      vb.y,
+      vb.w,
+      vb.h,
+      palette.q4Bg,
+      palette.border,
+      palette.q4Badge,
+      'Vídeos',
+      `${vb.items.length}`
+    );
+
+    vb.items.forEach((vid, idx) => {
+      const col = idx % vb.cols;
+      const row = Math.floor(idx / vb.cols);
+      const sx = vb.innerX + col * (vb.tileW + vb.tileGap);
+      const sy = vb.innerY + row * (vb.tileH + vb.tileGap);
+
+      ctx.save();
+      roundRectPath(ctx, sx, sy, vb.tileW, vb.tileH, 22);
+      ctx.fillStyle = palette.q4Card;
+      ctx.fill();
+
+      if (vid.thumb) {
+        drawCoverImage(ctx, vid.thumb, sx, sy, vb.tileW, vb.tileH, 22);
+      }
+
+      roundRectPath(ctx, sx, sy, vb.tileW, vb.tileH, 22);
+      ctx.clip();
+      const grad = ctx.createLinearGradient(0, sy + vb.tileH * 0.45, 0, sy + vb.tileH);
+      grad.addColorStop(0, 'rgba(0,0,0,0)');
+      grad.addColorStop(1, 'rgba(0,0,0,0.78)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(sx, sy, vb.tileW, vb.tileH);
+
+      const cx = sx + vb.tileW / 2;
+      const cy = sy + vb.tileH / 2 - 12;
+      const r = vb.cols === 1 ? 42 : 32;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(18, 18, 18, 0.72)';
+      ctx.fill();
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = palette.q4Badge;
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(cx - r * 0.25, cy - r * 0.36);
+      ctx.lineTo(cx + r * 0.44, cy);
+      ctx.lineTo(cx - r * 0.25, cy + r * 0.36);
+      ctx.closePath();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fill();
+
+      const rawLabel = (vid.caption || '').trim() || (vid.name || '').replace(/\.[^.]+$/, '') || `Vídeo ${idx + 1}`;
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '600 22px "Inter", system-ui, sans-serif';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(truncateLine(ctx, rawLabel, vb.tileW - 36), sx + 18, sy + vb.tileH - 16);
+
+      ctx.restore();
+    });
+  }
+
+  // 7. Continuous Footer
+  ctx.strokeStyle = palette.border;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(layout.padX, layout.footerDividerY);
+  ctx.lineTo(STRIP_W - layout.padX, layout.footerDividerY);
+  ctx.stroke();
+
+  if (entry.tags.length > 0) {
+    ctx.font = '600 22px "Inter", system-ui, sans-serif';
+    ctx.fillStyle = palette.headerSub;
+    ctx.textBaseline = 'top';
+    const tagsStr = entry.tags.slice(0, 6).map((t) => `#${t}`).join('   ');
+    ctx.fillText(truncateLine(ctx, tagsStr, 780), layout.padX, layout.footY);
+  }
+  const brand = 'DIÁRIO DE BORDO  ·  TIRA CONTÍNUA';
+  ctx.font = '700 21px "Inter", system-ui, sans-serif';
+  ctx.fillStyle = palette.accent;
+  ctx.textBaseline = 'top';
+  const brandW = ctx.measureText(brand).width;
+  ctx.fillText(brand, STRIP_W - layout.padX - brandW, layout.footY);
 
   ctx.restore();
 }
@@ -835,11 +1532,12 @@ export async function openDayMuralStudio(rawEntry, { onToast, onOpenLightbox } =
 
   const state = {
     entry,
+    layoutMode: 'quadrants', // 'quadrants' | 'strip'
     paletteId: 'ouro-obsidiana',
     fontMode: 'auto',
     format: 'png', // 'png' | 'jpeg'
     narrativeText: buildInitialNarrative(entry),
-    photos: entry.photos.map((p) => ({ ...p, bitmap: null })),
+    photos: entry.photos.map((p) => ({ ...p, bitmap: null, naturalWidth: 0, naturalHeight: 0 })),
     audios: entry.audios.map((a) => ({ ...a })),
     videos: entry.videos.map((v) => ({ ...v, thumb: null })),
     selectedPhotoIds: new Set(entry.photos.map((_, i) => i)),
@@ -848,13 +1546,38 @@ export async function openDayMuralStudio(rawEntry, { onToast, onOpenLightbox } =
   };
 
   let thumbObjectUrls = [];
+  let refreshCanvas = () => {};
+  let renderSeq = 0;
+
   const revokeThumbUrls = () => {
     thumbObjectUrls.forEach((u) => URL.revokeObjectURL(u));
     thumbObjectUrls = [];
   };
 
+  const releasePreviewMedia = () => {
+    state.photos.forEach((p) => {
+      if (p.bitmap) {
+        closeBitmap(p.bitmap);
+        if (typeof p.bitmap.getContext === 'function') {
+          p.bitmap.width = 1;
+          p.bitmap.height = 1;
+        }
+        p.bitmap = null;
+      }
+    });
+    state.videos.forEach((v) => {
+      if (v.thumb && typeof v.thumb.getContext === 'function') {
+        v.thumb.width = 1;
+        v.thumb.height = 1;
+        v.thumb = null;
+      }
+    });
+  };
+
   const closeStudio = () => {
+    renderSeq++;
     revokeThumbUrls();
+    releasePreviewMedia();
     screen.classList.remove('open');
   };
 
@@ -904,7 +1627,7 @@ export async function openDayMuralStudio(rawEntry, { onToast, onOpenLightbox } =
         <header class="editor-topbar">
           <button type="button" class="icon-btn" id="ms-close" aria-label="Fechar">${ICONS.close}</button>
           <div class="editor-topbar-center">
-            <span class="capsule-header-tag">Mural do Dia · 4 Quadrantes</span>
+            <span class="capsule-header-tag" id="ms-header-tag">Mural do Dia · 4 Quadrantes</span>
           </div>
           <div class="editor-topbar-right">
             <div class="mural-format-toggle" role="group" aria-label="Formato">
@@ -917,14 +1640,31 @@ export async function openDayMuralStudio(rawEntry, { onToast, onOpenLightbox } =
         <div class="editor-scroll">
           <!-- Live High-Detail Preview -->
           <div class="mural-studio-preview-wrap">
-            <canvas id="ms-preview-canvas" class="mural-preview-canvas" width="720" height="900" title="Toque para ampliar"></canvas>
-            <span class="mural-preview-hint">Prévia ao vivo · Exportação em 2160 × 2700 px · Toque para ampliar</span>
+            <div class="mural-preview-frame ${state.layoutMode === 'strip' ? 'mural-strip-scroll' : ''}" id="ms-preview-frame">
+              <canvas id="ms-preview-canvas" class="mural-preview-canvas ${state.layoutMode === 'strip' ? 'strip-mode' : ''}" width="720" height="900" title="Toque para ampliar"></canvas>
+            </div>
+            <span class="mural-preview-hint" id="ms-preview-hint">Prévia ao vivo · Exportação em 2880 × 3600 px · Toque para ampliar</span>
           </div>
 
           <div class="mural-studio-controls">
+            <!-- Layout Mode Selector -->
+            <section class="card mural-control-card">
+              <label class="field-label">Modo de Composição</label>
+              <div class="mural-mode-grid">
+                <button type="button" class="mural-mode-btn ${state.layoutMode === 'quadrants' ? 'active' : ''}" data-ms-mode="quadrants">
+                  <strong>4 Quadrantes</strong>
+                  <span>Grade adaptativa · 2880 px · alta nitidez</span>
+                </button>
+                <button type="button" class="mural-mode-btn ${state.layoutMode === 'strip' ? 'active' : ''}" data-ms-mode="strip">
+                  <strong>Tira Vertical Contínua</strong>
+                  <span>Rolo amplo 1440 px · zoom nítido na galeria</span>
+                </button>
+              </div>
+            </section>
+
             <!-- Palette Picker -->
             <section class="card mural-control-card">
-              <label class="field-label">Paleta dos 4 Blocos</label>
+              <label class="field-label">Paleta de Cores</label>
               <div class="mural-palette-grid">
                 ${PALETTES.map((pal) => `
                   <button type="button" class="mural-palette-btn ${state.paletteId === pal.id ? 'active' : ''}" data-ms-pal="${pal.id}">
@@ -940,10 +1680,10 @@ export async function openDayMuralStudio(rawEntry, { onToast, onOpenLightbox } =
               </div>
             </section>
 
-            <!-- Q1 Text Review & Font Control -->
+            <!-- Text Review & Font Control -->
             <section class="card mural-control-card">
               <div class="section-row-between">
-                <label class="field-label" for="ms-narrative-input">1. Bloco de Texto (Superior Esquerdo)</label>
+                <label class="field-label" for="ms-narrative-input" id="ms-label-text">1. Bloco de Texto (Superior Esquerdo)</label>
                 <div class="mural-font-bar">
                   ${FONT_MODES.map((fm) => `
                     <button type="button" class="mfmt-btn ${state.fontMode === fm.id ? 'active' : ''}" data-ms-font="${fm.id}">${fm.label}</button>
@@ -953,21 +1693,21 @@ export async function openDayMuralStudio(rawEntry, { onToast, onOpenLightbox } =
               <textarea id="ms-narrative-input" class="dark-input dark-textarea" rows="4" placeholder="Revise o relato corrido que aparecerá no bloco de texto...">${escapeHtml(state.narrativeText)}</textarea>
             </section>
 
-            <!-- Q2 Photos Selector -->
+            <!-- Photos Selector -->
             <section class="card mural-control-card">
-              <label class="field-label">2. Bloco de Fotos (Superior Direito · ${state.selectedPhotoIds.size}/${state.photos.length})</label>
+              <label class="field-label" id="ms-label-photos">2. Bloco de Fotos (Superior Direito · ${state.selectedPhotoIds.size}/${state.photos.length})</label>
               <div class="mural-pick-grid">${photoThumbsHtml}</div>
             </section>
 
-            <!-- Q3 Audios Selector -->
+            <!-- Audios Selector -->
             <section class="card mural-control-card">
-              <label class="field-label">3. Bloco de Áudios (Inferior Esquerdo · ${state.selectedAudioIds.size}/${state.audios.length})</label>
+              <label class="field-label" id="ms-label-audios">3. Bloco de Áudios (Inferior Esquerdo · ${state.selectedAudioIds.size}/${state.audios.length})</label>
               <div class="mural-pick-chips">${audioChipsHtml}</div>
             </section>
 
-            <!-- Q4 Videos Selector -->
+            <!-- Videos Selector -->
             <section class="card mural-control-card">
-              <label class="field-label">4. Bloco de Vídeos (Inferior Direito · ${state.selectedVideoIds.size}/${state.videos.length})</label>
+              <label class="field-label" id="ms-label-videos">4. Bloco de Vídeos (Inferior Direito · ${state.selectedVideoIds.size}/${state.videos.length})</label>
               <div class="mural-pick-chips">${videoChipsHtml}</div>
             </section>
           </div>
@@ -987,12 +1727,96 @@ export async function openDayMuralStudio(rawEntry, { onToast, onOpenLightbox } =
     `;
 
     const canvas = screen.querySelector('#ms-preview-canvas');
-    const redraw = () => {
-      if (canvas) renderDayMuralCanvas(canvas, state);
+    const previewFrame = screen.querySelector('#ms-preview-frame');
+    let lastExportDims = { w: EXPORT_QUAD_W, h: Math.round(BASE_POSTER_H * (EXPORT_QUAD_W / POSTER_W)) };
+
+    const syncStudioLabels = (isScrollable = false) => {
+      const isStrip = state.layoutMode === 'strip';
+      const headerTag = screen.querySelector('#ms-header-tag');
+      const hintEl = screen.querySelector('#ms-preview-hint');
+      const labelText = screen.querySelector('#ms-label-text');
+      const labelPhotos = screen.querySelector('#ms-label-photos');
+      const labelAudios = screen.querySelector('#ms-label-audios');
+      const labelVideos = screen.querySelector('#ms-label-videos');
+
+      if (headerTag) {
+        headerTag.textContent = isStrip ? 'Mural do Dia · Tira Vertical Contínua' : 'Mural do Dia · 4 Quadrantes';
+      }
+      if (hintEl) {
+        hintEl.textContent = isScrollable
+          ? `Prévia ao vivo · Exportação em ${lastExportDims.w} × ${lastExportDims.h} px · Role e toque para ampliar`
+          : `Prévia ao vivo · Exportação em ${lastExportDims.w} × ${lastExportDims.h} px · Toque para ampliar`;
+      }
+      if (labelText) {
+        labelText.textContent = isStrip
+          ? '1. Bloco de Texto (Abaixo do Cabeçalho)'
+          : '1. Bloco de Texto (Superior Esquerdo)';
+      }
+      if (labelPhotos) {
+        labelPhotos.textContent = `2. Bloco de Fotos (${isStrip ? 'Largura Ampla' : 'Superior Direito'} · ${state.selectedPhotoIds.size}/${state.photos.length})`;
+      }
+      if (labelAudios) {
+        labelAudios.textContent = `3. Bloco de Áudios (${isStrip ? 'Bloco Discreto' : 'Inferior Esquerdo'} · ${state.selectedAudioIds.size}/${state.audios.length})`;
+      }
+      if (labelVideos) {
+        labelVideos.textContent = `4. Bloco de Vídeos (${isStrip ? 'Bloco Discreto' : 'Inferior Direito'} · ${state.selectedVideoIds.size}/${state.videos.length})`;
+      }
+
+      previewFrame?.classList.toggle('mural-strip-scroll', isScrollable);
+      canvas?.classList.toggle('strip-mode', isScrollable);
     };
+
+    const redraw = async () => {
+      if (!canvas) return;
+      const seq = ++renderSeq;
+      const measureCtx = canvas.getContext('2d');
+      let isScrollable = state.layoutMode === 'strip';
+
+      if (state.layoutMode === 'strip') {
+        const layout = measureVerticalStripLayout(measureCtx, state);
+        const exportScale = Math.min(1, MAX_EXPORT_H / layout.totalH);
+        lastExportDims = {
+          w: Math.round(STRIP_W * exportScale),
+          h: Math.round(layout.totalH * exportScale)
+        };
+        const previewW = 540;
+        const previewH = Math.max(200, Math.round((previewW * layout.totalH) / STRIP_W));
+        if (canvas.width !== previewW) canvas.width = previewW;
+        if (canvas.height !== previewH) canvas.height = previewH;
+        await renderVerticalStripCanvas(canvas, state, layout, { highRes: false });
+      } else {
+        const layout = measureQuadrantsLayout(measureCtx, state);
+        const exportScale = Math.min(EXPORT_QUAD_W / POSTER_W, MAX_EXPORT_H / layout.totalH);
+        lastExportDims = {
+          w: Math.round(POSTER_W * exportScale),
+          h: Math.round(layout.totalH * exportScale)
+        };
+        isScrollable = layout.totalH > POSTER_W * 1.45;
+        const previewW = 720;
+        const previewH = Math.max(400, Math.round((previewW * layout.totalH) / POSTER_W));
+        if (canvas.width !== previewW) canvas.width = previewW;
+        if (canvas.height !== previewH) canvas.height = previewH;
+        await renderDayMuralCanvas(canvas, state, { precomputedLayout: layout, highRes: false });
+      }
+
+      if (seq !== renderSeq || !screen.classList.contains('open')) return;
+      syncStudioLabels(isScrollable);
+    };
+    refreshCanvas = redraw;
     redraw();
 
     screen.querySelector('#ms-close')?.addEventListener('click', closeStudio);
+
+    screen.querySelectorAll('[data-ms-mode]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.layoutMode = btn.dataset.msMode;
+        screen.querySelectorAll('[data-ms-mode]').forEach((b) =>
+          b.classList.toggle('active', b.dataset.msMode === state.layoutMode)
+        );
+        if (previewFrame) previewFrame.scrollTop = 0;
+        redraw();
+      });
+    });
 
     screen.querySelectorAll('[data-ms-fmt]').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -1063,26 +1887,52 @@ export async function openDayMuralStudio(rawEntry, { onToast, onOpenLightbox } =
 
     const buildHighResBlob = async () => {
       const hiCanvas = document.createElement('canvas');
-      hiCanvas.width = POSTER_W;
-      hiCanvas.height = POSTER_H;
-      renderDayMuralCanvas(hiCanvas, state);
-      const isJpeg = state.format === 'jpeg';
-      const mime = isJpeg ? 'image/jpeg' : 'image/png';
-      const ext = isJpeg ? 'jpg' : 'png';
-      const fileName = `${entry.dateKey || 'diario'}_mural-do-dia.${ext}`;
-      const blob = await new Promise((resolve) =>
-        hiCanvas.toBlob((b) => resolve(b), mime, isJpeg ? 0.93 : undefined)
-      );
-      return { blob, fileName, mime };
+      let exportW = EXPORT_QUAD_W;
+      let exportH = Math.round(BASE_POSTER_H * (EXPORT_QUAD_W / POSTER_W));
+
+      try {
+        const measureCtx = hiCanvas.getContext('2d');
+        if (state.layoutMode === 'strip') {
+          const layout = measureVerticalStripLayout(measureCtx, state);
+          const exportScale = Math.min(1, MAX_EXPORT_H / layout.totalH);
+          exportW = Math.round(STRIP_W * exportScale);
+          exportH = Math.round(layout.totalH * exportScale);
+          hiCanvas.width = exportW;
+          hiCanvas.height = exportH;
+          await renderVerticalStripCanvas(hiCanvas, state, layout, { highRes: true });
+        } else {
+          const layout = measureQuadrantsLayout(measureCtx, state);
+          const exportScale = Math.min(EXPORT_QUAD_W / POSTER_W, MAX_EXPORT_H / layout.totalH);
+          exportW = Math.round(POSTER_W * exportScale);
+          exportH = Math.round(layout.totalH * exportScale);
+          hiCanvas.width = exportW;
+          hiCanvas.height = exportH;
+          await renderDayMuralCanvas(hiCanvas, state, { precomputedLayout: layout, highRes: true });
+        }
+
+        const isJpeg = state.format === 'jpeg';
+        const mime = isJpeg ? 'image/jpeg' : 'image/png';
+        const ext = isJpeg ? 'jpg' : 'png';
+        const modeSlug = state.layoutMode === 'strip' ? 'tira-vertical' : 'mural-do-dia';
+        const fileName = `${entry.dateKey || 'diario'}_${modeSlug}.${ext}`;
+        const blob = await new Promise((resolve) =>
+          hiCanvas.toBlob((b) => resolve(b), mime, isJpeg ? 0.92 : undefined)
+        );
+        return { blob, fileName, mime, exportW, exportH };
+      } finally {
+        hiCanvas.width = 1;
+        hiCanvas.height = 1;
+      }
     };
 
     canvas?.addEventListener('click', async () => {
       onToast?.('Gerando prévia em alta resolução...');
-      const { blob } = await buildHighResBlob();
+      const { blob, exportW, exportH } = await buildHighResBlob();
       if (!blob) return;
       const url = URL.createObjectURL(blob);
       thumbObjectUrls.push(url);
-      onOpenLightbox?.([{ url, caption: `Mural do Dia · ${parts.day} ${parts.monthShort} ${parts.year} (2160 × 2700 px)` }], 0);
+      const labelMode = state.layoutMode === 'strip' ? 'Tira Vertical' : 'Mural do Dia';
+      onOpenLightbox?.([{ url, caption: `${labelMode} · ${parts.day} ${parts.monthShort} ${parts.year} (${exportW} × ${exportH} px)` }], 0);
     });
 
     screen.querySelector('#ms-save-folder')?.addEventListener('click', async () => {
@@ -1096,7 +1946,8 @@ export async function openDayMuralStudio(rawEntry, { onToast, onOpenLightbox } =
       const { blob, fileName, mime } = await buildHighResBlob();
       if (!blob) return;
       const file = new File([blob], fileName, { type: mime, lastModified: Date.now() });
-      const title = entry.title.trim() || `Mural do Dia · ${parts.day} ${parts.monthShort} ${parts.year}`;
+      const labelMode = state.layoutMode === 'strip' ? 'Tira Vertical' : 'Mural do Dia';
+      const title = entry.title.trim() || `${labelMode} · ${parts.day} ${parts.monthShort} ${parts.year}`;
       await shareSingleFile(file, { title, text: title, onToast });
     });
   };
@@ -1104,14 +1955,36 @@ export async function openDayMuralStudio(rawEntry, { onToast, onOpenLightbox } =
   renderStudioMarkup();
   screen.classList.add('open');
 
-  // Asynchronously load full photo bitmaps and extract real video frame thumbnails
+  // Decode lightweight 720px bitmaps for live preview while recording original dimensions
   Promise.all([
-    Promise.all(state.photos.map(async (p) => { p.bitmap = await loadBitmapFromBlob(p.blob); })),
-    Promise.all(state.videos.map(async (v) => { v.thumb = await extractVideoThumbnail(v.blob); }))
+    Promise.all(
+      state.photos.map(async (p) => {
+        const decoded = await decodePreviewBitmap(p.blob, 720);
+        if (!screen.classList.contains('open')) {
+          closeBitmap(decoded.bitmap);
+          return;
+        }
+        p.bitmap = decoded.bitmap;
+        p.naturalWidth = decoded.width;
+        p.naturalHeight = decoded.height;
+      })
+    ),
+    Promise.all(
+      state.videos.map(async (v) => {
+        const thumb = await extractVideoThumbnail(v.blob);
+        if (!screen.classList.contains('open')) {
+          if (thumb && typeof thumb.getContext === 'function') {
+            thumb.width = 1;
+            thumb.height = 1;
+          }
+          return;
+        }
+        v.thumb = thumb;
+      })
+    )
   ]).then(() => {
-    const canvas = screen.querySelector('#ms-preview-canvas');
-    if (canvas && screen.classList.contains('open')) {
-      renderDayMuralCanvas(canvas, state);
+    if (screen.classList.contains('open')) {
+      refreshCanvas();
     }
   });
 }

@@ -757,7 +757,7 @@ function openEntryReader(rawEntry, initialTab = 'overview', options = {}) {
           </div>
           <button type="button" class="gold-outline-btn btn-sm btn-mural-day-full" id="rd-day-mural-btn">
             ${ICONS.muralPoster}
-            <span>Gerar Mural do Dia (4 Quadrantes)</span>
+            <span>Gerar Mural do Dia (Quadrantes / Tira)</span>
           </button>
         </section>
 
@@ -1313,7 +1313,7 @@ function openPostSaveModal(rawEntry) {
           </button>
           <button type="button" class="gold-outline-btn" id="ps-day-mural-btn">
             ${ICONS.muralPoster}
-            <span>Gerar Mural do Dia (4 Quadrantes)</span>
+            <span>Gerar Mural do Dia (Quadrantes / Tira)</span>
           </button>
         </div>
       </div>
