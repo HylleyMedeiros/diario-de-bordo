@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'diario-de-bordo-';
-const CACHE_NAME = 'diario-de-bordo-v8';
+const CACHE_NAME = 'diario-de-bordo-v9';
 const SHARE_DB_NAME = 'DiarioDeBordoShareInbox';
 const SHARE_DB_VERSION = 1;
 const SHARE_STORE = 'pending_shares';
@@ -14,6 +14,7 @@ const APP_SHELL = [
   './js/echo.js',
   './js/sara.js',
   './js/export.js',
+  './js/day-mural.js',
   './js/gratitude.js',
   './js/mural.js',
   './js/editor.js',

@@ -23,6 +23,7 @@ import { renderStatsTab } from './stats.js';
 import { renderMoreTab } from './more.js';
 import { openGratitudeWall } from './gratitude.js';
 import { shareEntryMedia, saveEntryToDiarioFolder } from './export.js';
+import { openDayMuralStudio } from './day-mural.js';
 
 let entries = [];
 let gratitudePeople = [];
@@ -754,6 +755,10 @@ function openEntryReader(rawEntry, initialTab = 'overview', options = {}) {
               <span>Salvar na Pasta DIARIO</span>
             </button>
           </div>
+          <button type="button" class="gold-outline-btn btn-sm btn-mural-day-full" id="rd-day-mural-btn">
+            ${ICONS.muralPoster}
+            <span>Gerar Mural do Dia (4 Quadrantes)</span>
+          </button>
         </section>
 
         ${echoesHtml}
@@ -765,6 +770,10 @@ function openEntryReader(rawEntry, initialTab = 'overview', options = {}) {
 
       host.querySelector('#rd-save-folder-btn')?.addEventListener('click', () => {
         saveEntryToDiarioFolder(entry, { onToast: showToast });
+      });
+
+      host.querySelector('#rd-day-mural-btn')?.addEventListener('click', () => {
+        openDayMuralStudio(entry, { onToast: showToast, onOpenLightbox: openLightbox });
       });
 
       host.querySelector('#rd-seal-btn')?.addEventListener('click', async () => {
@@ -1302,6 +1311,10 @@ function openPostSaveModal(rawEntry) {
             ${ICONS.folder}
             <span>Salvar na Pasta DIARIO</span>
           </button>
+          <button type="button" class="gold-outline-btn" id="ps-day-mural-btn">
+            ${ICONS.muralPoster}
+            <span>Gerar Mural do Dia (4 Quadrantes)</span>
+          </button>
         </div>
       </div>
 
@@ -1321,6 +1334,11 @@ function openPostSaveModal(rawEntry) {
 
   modal.querySelector('#ps-folder-btn')?.addEventListener('click', () => {
     saveEntryToDiarioFolder(entry, { onToast: showToast });
+  });
+
+  modal.querySelector('#ps-day-mural-btn')?.addEventListener('click', () => {
+    modal.classList.remove('open');
+    openDayMuralStudio(entry, { onToast: showToast, onOpenLightbox: openLightbox });
   });
 
   modal.classList.add('open');

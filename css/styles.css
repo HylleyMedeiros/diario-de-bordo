@@ -4894,3 +4894,227 @@ button {
 .post-save-actions .gold-outline-btn {
   width: 100%;
 }
+
+/* ==========================================================================
+   Mural do Dia Studio (4-Quadrant Poster Generator)
+   ========================================================================== */
+#day-mural-screen {
+  z-index: 82;
+}
+
+.btn-mural-day-full {
+  margin-top: 9px;
+}
+
+.mural-studio-preview-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0 16px;
+}
+
+.mural-preview-canvas {
+  width: 100%;
+  max-width: 340px;
+  aspect-ratio: 4 / 5;
+  border-radius: 16px;
+  border: 1px solid rgba(212, 180, 131, 0.34);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.62);
+  cursor: pointer;
+  display: block;
+  background: #111;
+}
+
+.mural-preview-hint {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.mural-studio-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 12px;
+}
+
+.mural-control-card {
+  padding: 13px 14px;
+}
+
+.mural-control-card .field-label {
+  margin-bottom: 8px;
+}
+
+.mural-palette-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.mural-palette-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 10px;
+  border-radius: 12px;
+  background: #151515;
+  border: 1px solid var(--border-subtle);
+  text-align: left;
+  transition: border-color 0.16s, background 0.16s;
+}
+
+.mural-palette-btn.active {
+  border-color: var(--gold);
+  background: var(--gold-dim);
+}
+
+.mural-palette-dots {
+  display: flex;
+  gap: 5px;
+}
+
+.mural-palette-dots i {
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
+  border: 1.5px solid transparent;
+  display: inline-block;
+}
+
+.mural-palette-btn span {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.mural-font-bar,
+.mural-format-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #151515;
+  padding: 3px;
+  border-radius: 9px;
+  border: 1px solid var(--border-subtle);
+}
+
+.mural-control-card .section-row-between {
+  margin-bottom: 8px;
+}
+
+.mural-control-card .section-row-between .field-label {
+  margin-bottom: 0;
+}
+
+.mfmt-btn {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  padding: 4px 9px;
+  border-radius: 6px;
+  transition: background 0.14s, color 0.14s;
+}
+
+.mfmt-btn.active {
+  background: var(--gold);
+  color: var(--gold-text-on);
+}
+
+.mural-pick-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 7px;
+}
+
+.mural-pick-thumb {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 2px solid transparent;
+  opacity: 0.45;
+  transition: opacity 0.15s, border-color 0.15s;
+}
+
+.mural-pick-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mural-pick-thumb.selected {
+  opacity: 1;
+  border-color: var(--gold);
+}
+
+.mp-check {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  color: var(--gold-text-on);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mural-pick-thumb.selected .mp-check {
+  background: var(--gold);
+  border-color: var(--gold);
+}
+
+.mp-check svg {
+  width: 11px;
+  height: 11px;
+}
+
+.mural-pick-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.mural-pick-chip {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: #161616;
+  border: 1px solid var(--border-subtle);
+  padding: 6px 11px;
+  border-radius: 999px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mural-pick-chip.selected {
+  color: var(--gold-light);
+  background: var(--gold-dim);
+  border-color: rgba(212, 180, 131, 0.45);
+}
+
+.mural-studio-footer {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 10px 14px calc(12px + env(safe-area-inset-bottom, 0px));
+  background: #171717;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+
+.mural-studio-footer .gold-outline-btn,
+.mural-studio-footer .btn-gold {
+  width: 100%;
+  font-size: 13px;
+  padding: 11px 10px;
+}

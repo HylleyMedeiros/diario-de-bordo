@@ -221,25 +221,7 @@ function triggerSequentialDownloads(items) {
   });
 }
 
-/**
- * Saves entry report (.txt) and all photos/videos directly to a user-selected
- * local directory (e.g. DIARIO) via File System Access API, with automatic download fallback.
- */
-export async function saveEntryToDiarioFolder(rawEntry, { onToast } = {}) {
-  const entry = normalizeEntry(rawEntry);
-  const datePart = entry.dateKey || 'diario';
-  const timePart = (entry.timeStr || '00:00').replace(':', 'h');
-  const slug = sanitizeFileSlug(entry.title, 'relato');
-  const txtName = `${datePart}_${timePart}_${slug}.txt`;
-
-  const txtBlob = new Blob([formatEntryAsText(entry)], { type: 'text/plain;charset=utf-8' });
-  const mediaFiles = buildEntryMediaFiles(entry);
-
-  const items = [
-    { name: txtName, blob: txtBlob },
-    ...mediaFiles.map((file) => ({ name: file.name, blob: file }))
-  ];
-
+async function writeItemsToDirectoryOrFallback(items, { onFsSuccess, onFallback, onToast } = {}) {
   if (typeof window.showDirectoryPicker === 'function') {
     let dirHandle;
     try {
@@ -251,9 +233,9 @@ export async function saveEntryToDiarioFolder(rawEntry, { onToast } = {}) {
       if (err?.name === 'AbortError') {
         return { ok: false, aborted: true };
       }
-      // Restricted or unavailable picker on this device/origin -> fall back to download
       triggerSequentialDownloads(items);
-      onToast?.(`Pasta direta restrita — baixando ${items.length} ${items.length === 1 ? 'arquivo' : 'arquivos'} (.txt + mídias)...`);
+      const msg = onFallback ? onFallback(items, 'restricted') : `Pasta direta restrita — baixando ${items.length} arquivo(s)...`;
+      onToast?.(msg);
       return { ok: true, mode: 'download-fallback', count: items.length };
     }
 
@@ -273,17 +255,93 @@ export async function saveEntryToDiarioFolder(rawEntry, { onToast } = {}) {
         await writable.close();
       }
 
-      const mediaMsg = mediaFiles.length > 0 ? ` + ${mediaFiles.length} ${mediaFiles.length === 1 ? 'mídia' : 'mídias'}` : '';
-      onToast?.(`Salvo em "${dirHandle.name}": relato .txt${mediaMsg}!`);
+      const msg = onFsSuccess ? onFsSuccess(dirHandle.name, items) : `Salvo em "${dirHandle.name}"!`;
+      onToast?.(msg);
       return { ok: true, mode: 'fs-access', folder: dirHandle.name, count: items.length };
     } catch {
       triggerSequentialDownloads(items);
-      onToast?.(`Gravação direta bloqueada — baixando ${items.length} ${items.length === 1 ? 'arquivo' : 'arquivos'} (.txt + mídias)...`);
+      const msg = onFallback ? onFallback(items, 'blocked') : `Gravação direta bloqueada — baixando ${items.length} arquivo(s)...`;
+      onToast?.(msg);
       return { ok: true, mode: 'download-fallback', count: items.length };
     }
   }
 
   triggerSequentialDownloads(items);
-  onToast?.(`Baixando ${items.length} ${items.length === 1 ? 'arquivo' : 'arquivos'} (.txt + mídias)...`);
+  const msg = onFallback ? onFallback(items, 'unsupported') : `Baixando ${items.length} arquivo(s)...`;
+  onToast?.(msg);
   return { ok: true, mode: 'download-fallback', count: items.length };
+}
+
+/**
+ * Shares a single generated File (e.g. Mural do Dia PNG/JPEG) via Web Share API.
+ */
+export async function shareSingleFile(file, { title = 'Diário de Bordo', text = '', onToast } = {}) {
+  if (!file) return { ok: false, reason: 'no-file' };
+
+  const files = [file];
+  const canShareFiles =
+    typeof navigator.share === 'function' &&
+    typeof navigator.canShare === 'function' &&
+    navigator.canShare({ files });
+
+  if (!canShareFiles) {
+    onToast?.('Compartilhamento direto de imagem indisponível neste navegador. Use "Salvar na Pasta DIARIO".');
+    return { ok: false, reason: 'unsupported' };
+  }
+
+  try {
+    await navigator.share({ files, title, text });
+    return { ok: true, mode: 'file' };
+  } catch (err) {
+    if (err?.name === 'AbortError') return { ok: false, aborted: true };
+    onToast?.('Não foi possível abrir o menu de compartilhamento para este arquivo.');
+    return { ok: false, reason: 'error' };
+  }
+}
+
+/**
+ * Saves a single generated file (e.g. Mural do Dia PNG/JPEG) into the selected DIARIO folder
+ * with automatic download fallback.
+ */
+export async function saveSingleFileToDiarioFolder(fileName, blob, { onToast } = {}) {
+  if (!blob) return { ok: false, reason: 'no-blob' };
+  const items = [{ name: fileName, blob }];
+  return writeItemsToDirectoryOrFallback(items, {
+    onFsSuccess: (folder) => `Mural salvo em "${folder}": ${fileName}`,
+    onFallback: (_, reason) =>
+      reason === 'unsupported'
+        ? `Baixando ${fileName}...`
+        : `Pasta direta indisponível — baixando ${fileName}...`,
+    onToast
+  });
+}
+
+/**
+ * Saves entry report (.txt) and all photos/videos directly to a user-selected
+ * local directory (e.g. DIARIO) via File System Access API, with automatic download fallback.
+ */
+export async function saveEntryToDiarioFolder(rawEntry, { onToast } = {}) {
+  const entry = normalizeEntry(rawEntry);
+  const datePart = entry.dateKey || 'diario';
+  const timePart = (entry.timeStr || '00:00').replace(':', 'h');
+  const slug = sanitizeFileSlug(entry.title, 'relato');
+  const txtName = `${datePart}_${timePart}_${slug}.txt`;
+
+  const txtBlob = new Blob([formatEntryAsText(entry)], { type: 'text/plain;charset=utf-8' });
+  const mediaFiles = buildEntryMediaFiles(entry);
+
+  const items = [
+    { name: txtName, blob: txtBlob },
+    ...mediaFiles.map((file) => ({ name: file.name, blob: file }))
+  ];
+
+  const mediaMsg = mediaFiles.length > 0 ? ` + ${mediaFiles.length} ${mediaFiles.length === 1 ? 'mídia' : 'mídias'}` : '';
+  return writeItemsToDirectoryOrFallback(items, {
+    onFsSuccess: (folder) => `Salvo em "${folder}": relato .txt${mediaMsg}!`,
+    onFallback: (list, reason) =>
+      reason === 'unsupported'
+        ? `Baixando ${list.length} ${list.length === 1 ? 'arquivo' : 'arquivos'} (.txt + mídias)...`
+        : `Pasta direta restrita — baixando ${list.length} ${list.length === 1 ? 'arquivo' : 'arquivos'} (.txt + mídias)...`,
+    onToast
+  });
 }
