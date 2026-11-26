@@ -14,6 +14,7 @@ export function isCapsuleConsistent(entry) {
   );
   const hasRichMedia = Boolean(
     (entry?.photos || []).length > 0 ||
+    (entry?.videos || []).length > 0 ||
     (entry?.audios || []).length > 0 ||
     (entry?.timelineMoments || []).length > 0 ||
     (entry?.goodThings || []).some((g) => String(g || '').trim() !== '')
@@ -58,6 +59,7 @@ export function findTemporalEchoes(targetEntry, allEntries = [], limit = 2) {
       (cand.milestoneTitle || '').trim() ||
       (cand.timelineMoments || []).length > 0 ||
       (cand.photos || []).length > 0 ||
+      (cand.videos || []).length > 0 ||
       (cand.audios || []).length > 0 ||
       (cand.goodThings || []).some((g) => String(g || '').trim() !== '')
     );

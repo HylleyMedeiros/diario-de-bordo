@@ -5,10 +5,14 @@ import {
   getAllGratitudePeople,
   saveEntry,
   normalizeEntry,
+  consumePendingShare,
+  compressPhotoWithStats,
+  extractAudioDuration,
   formatSplashDate,
   formatEntryDateParts,
   formatBytes,
-  toDateKey
+  toDateKey,
+  toTimeStr
 } from './db.js';
 import { ICONS, getMoodById } from './icons.js';
 import { isCapsuleConsistent, findTemporalEchoes } from './echo.js';
@@ -18,6 +22,7 @@ import { openEditor } from './editor.js';
 import { renderStatsTab } from './stats.js';
 import { renderMoreTab } from './more.js';
 import { openGratitudeWall } from './gratitude.js';
+import { shareEntryMedia, saveEntryToDiarioFolder } from './export.js';
 
 let entries = [];
 let gratitudePeople = [];
@@ -293,6 +298,7 @@ function renderTimeline() {
       const contentTrim = (entry.content || '').trim();
       const quoteTrim = (entry.authorQuote || '').trim();
       const photos = entry.photos || [];
+      const videos = entry.videos || [];
       const audios = entry.audios || [];
       const checklist = entry.checklist || [];
       const momentsCount = (entry.timelineMoments || []).length;
@@ -332,6 +338,9 @@ function renderTimeline() {
       }
       if (hasNight) {
         badges.push(`<span class="meta-pill">${ICONS.moon} Olhar da Noite</span>`);
+      }
+      if (videos.length > 0) {
+        badges.push(`<span class="meta-pill">${ICONS.video} ${videos.length}</span>`);
       }
       if (audios.length > 0) {
         badges.push(`<span class="meta-pill">${ICONS.mic} ${audios.length}</span>`);
@@ -407,8 +416,9 @@ function launchEditor({ entry = null, dateKey = null, initialTab = 'overview' })
     initialTab,
     allTags: getAllUniqueTags(),
     allEntries: entries,
-    onSaved: async () => {
+    onSaved: async (saved) => {
       await refreshEntries();
+      if (saved) openPostSaveModal(saved);
     },
     onDeleted: async () => {
       await refreshEntries();
@@ -461,11 +471,12 @@ function openEntryReader(rawEntry, initialTab = 'overview', options = {}) {
   ];
 
   const getTabBadge = (id) => {
+    const mediaTotal = entry.photos.length + (entry.videos || []).length;
     if (id === 'timeline') {
       if (moments.length > 0) return `<span class="capsule-tab-badge">${moments.length}</span>`;
       if (hasNight) return `<span class="capsule-tab-dot"></span>`;
     }
-    if (id === 'photos' && entry.photos.length > 0) return `<span class="capsule-tab-badge">${entry.photos.length}</span>`;
+    if (id === 'photos' && mediaTotal > 0) return `<span class="capsule-tab-badge">${mediaTotal}</span>`;
     if (id === 'audios' && entry.audios.length > 0) return `<span class="capsule-tab-badge">${entry.audios.length}</span>`;
     if (id === 'goodThings' && goodThings.length > 0) return `<span class="capsule-tab-badge">${goodThings.length}/5</span>`;
     if (id === 'text' && hasTextOrQuote) return `<span class="capsule-tab-dot"></span>`;
@@ -657,8 +668,12 @@ function openEntryReader(rawEntry, initialTab = 'overview', options = {}) {
         <section class="capsule-summary-grid">
           <button type="button" class="capsule-stat-tile" data-rd-jump="photos">
             <span class="cstat-icon">${ICONS.gallery}</span>
-            <strong>${entry.photos.length}</strong>
-            <span>${entry.photos.length === 1 ? 'Foto no dia' : 'Fotos no dia'}</span>
+            <strong>${entry.photos.length + (entry.videos || []).length}</strong>
+            <span>${(entry.videos || []).length > 0
+              ? (entry.photos.length > 0
+                  ? `${entry.photos.length} foto${entry.photos.length > 1 ? 's' : ''} · ${entry.videos.length} vídeo${entry.videos.length > 1 ? 's' : ''}`
+                  : (entry.videos.length === 1 ? 'Vídeo no dia' : 'Vídeos no dia'))
+              : (entry.photos.length === 1 ? 'Foto no dia' : 'Fotos no dia')}</span>
           </button>
           <button type="button" class="capsule-stat-tile" data-rd-jump="audios">
             <span class="cstat-icon">${ICONS.mic}</span>
@@ -724,8 +739,33 @@ function openEntryReader(rawEntry, initialTab = 'overview', options = {}) {
           </div>
         ` : ''}
 
+        <section class="card capsule-export-card" aria-label="Compartilhar e Exportar">
+          <div class="capsule-export-head">
+            <span>Exportar &amp; Compartilhar</span>
+            <small>${entry.photos.length + (entry.videos || []).length} ${(entry.photos.length + (entry.videos || []).length) === 1 ? 'mídia' : 'mídias'} + relato .txt</small>
+          </div>
+          <div class="capsule-export-actions">
+            <button type="button" class="btn-gold btn-sm" id="rd-share-media-btn">
+              ${ICONS.share}
+              <span>Compartilhar Mídias</span>
+            </button>
+            <button type="button" class="gold-outline-btn btn-sm" id="rd-save-folder-btn">
+              ${ICONS.folder}
+              <span>Salvar na Pasta DIARIO</span>
+            </button>
+          </div>
+        </section>
+
         ${echoesHtml}
       `;
+
+      host.querySelector('#rd-share-media-btn')?.addEventListener('click', () => {
+        shareEntryMedia(entry, { onToast: showToast });
+      });
+
+      host.querySelector('#rd-save-folder-btn')?.addEventListener('click', () => {
+        saveEntryToDiarioFolder(entry, { onToast: showToast });
+      });
 
       host.querySelector('#rd-seal-btn')?.addEventListener('click', async () => {
         entry.isSealed = true;
@@ -868,13 +908,14 @@ function openEntryReader(rawEntry, initialTab = 'overview', options = {}) {
     }
 
     if (readerTab === 'photos') {
-      if (!entry.photos.length) {
+      const videos = entry.videos || [];
+      if (!entry.photos.length && !videos.length) {
         host.innerHTML = `
           <div class="card capsule-empty-box">
             <div class="capsule-empty-icon">${ICONS.gallery}</div>
-            <h4>Sem fotos nesta cápsula</h4>
-            <p>Toque abaixo para adicionar fotos otimizadas deste dia.</p>
-            <button type="button" class="gold-outline-btn btn-sm" id="rd-go-edit-photos">Adicionar fotos</button>
+            <h4>Sem fotos ou vídeos nesta cápsula</h4>
+            <p>Toque abaixo para adicionar fotos otimizadas ou vídeos deste dia.</p>
+            <button type="button" class="gold-outline-btn btn-sm" id="rd-go-edit-photos">Adicionar mídia</button>
           </div>
         `;
         host.querySelector('#rd-go-edit-photos')?.addEventListener('click', () => {
@@ -890,19 +931,54 @@ function openEntryReader(rawEntry, initialTab = 'overview', options = {}) {
         return { url: u, caption: ph.caption || '', size: formatBytes(ph.compressedSize || ph.blob?.size || 0) };
       });
 
+      const videoItems = videos.map((vid) => {
+        const u = URL.createObjectURL(vid.blob);
+        readerObjectUrls.push(u);
+        return { url: u, caption: vid.caption || '', size: formatBytes(vid.size || vid.blob?.size || 0) };
+      });
+
       host.innerHTML = `
-        <div class="capsule-photos-list">
-          ${photoItems.map((item, idx) => `
-            <article class="card capsule-photo-card reader-photo-card" data-rd-photo="${idx}">
-              <div class="capsule-photo-frame">
-                <img src="${item.url}" alt="Foto ${idx + 1}">
-                <span class="photo-size-pill">${item.size}</span>
-              </div>
-              ${item.caption ? `<p class="reader-photo-caption">${escapeHtml(item.caption)}</p>` : ''}
-            </article>
-          `).join('')}
+        <div class="reader-media-bar">
+          <span class="rmb-count">${photoItems.length + videoItems.length} ${(photoItems.length + videoItems.length) === 1 ? 'mídia neste dia' : 'mídias neste dia'}</span>
+          <button type="button" class="btn-gold btn-sm" id="rd-photos-share-btn">
+            ${ICONS.share}
+            <span>Compartilhar Mídias</span>
+          </button>
         </div>
+        ${photoItems.length > 0 ? `
+          <div class="capsule-photos-list">
+            ${photoItems.map((item, idx) => `
+              <article class="card capsule-photo-card reader-photo-card" data-rd-photo="${idx}">
+                <div class="capsule-photo-frame">
+                  <img src="${item.url}" alt="Foto ${idx + 1}">
+                  <span class="photo-size-pill">${item.size}</span>
+                </div>
+                ${item.caption ? `<p class="reader-photo-caption">${escapeHtml(item.caption)}</p>` : ''}
+              </article>
+            `).join('')}
+          </div>
+        ` : ''}
+        ${videoItems.length > 0 ? `
+          <div class="capsule-videos-section">
+            <h4 class="capsule-sub-heading">${ICONS.video} Vídeos do Dia (${videoItems.length})</h4>
+            <div class="capsule-photos-list">
+              ${videoItems.map((item) => `
+                <article class="card capsule-video-card">
+                  <div class="capsule-video-frame">
+                    <video class="capsule-video-player" src="${item.url}" controls playsinline preload="metadata"></video>
+                    <span class="photo-size-pill">${item.size}</span>
+                  </div>
+                  ${item.caption ? `<p class="reader-photo-caption">${escapeHtml(item.caption)}</p>` : ''}
+                </article>
+              `).join('')}
+            </div>
+          </div>
+        ` : ''}
       `;
+
+      host.querySelector('#rd-photos-share-btn')?.addEventListener('click', () => {
+        shareEntryMedia(entry, { onToast: showToast });
+      });
 
       host.querySelectorAll('[data-rd-photo]').forEach((card) => {
         card.addEventListener('click', () => {
@@ -1179,6 +1255,77 @@ export function openLightbox(items, startIdx = 0) {
   lb.classList.add('open');
 }
 
+// --- Post-Save Confirmation Sheet (Share Media + Save to Local DIARIO Folder) ---
+function openPostSaveModal(rawEntry) {
+  const modal = document.getElementById('post-save-modal');
+  if (!modal) return;
+
+  const entry = normalizeEntry(rawEntry);
+  const p = formatEntryDateParts(entry.dateKey, entry.timeStr);
+  const photosCount = entry.photos.length;
+  const videosCount = entry.videos.length;
+  const momentsCount = entry.timelineMoments.length;
+  const mediaCount = photosCount + videosCount;
+
+  const summaryBits = [];
+  if (photosCount) summaryBits.push(`${photosCount} ${photosCount === 1 ? 'foto' : 'fotos'}`);
+  if (videosCount) summaryBits.push(`${videosCount} ${videosCount === 1 ? 'vídeo' : 'vídeos'}`);
+  if (momentsCount) summaryBits.push(`${momentsCount} ${momentsCount === 1 ? 'momento' : 'momentos'}`);
+  if (entry.audios.length) summaryBits.push(`${entry.audios.length} ${entry.audios.length === 1 ? 'áudio' : 'áudios'}`);
+
+  modal.innerHTML = `
+    <div class="modal-backdrop" data-close-ps></div>
+    <div class="modal-sheet post-save-sheet">
+      <div class="modal-header">
+        <div>
+          <h3>Cápsula Salva</h3>
+          <p class="modal-subtitle">${p.day} ${p.monthShort} ${p.year} · ${p.time}</p>
+        </div>
+        <button type="button" class="icon-btn" data-close-ps aria-label="Fechar">${ICONS.close}</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="post-save-hero">
+          <div class="post-save-check">${ICONS.check}</div>
+          <div class="post-save-meta">
+            <strong>${escapeHtml(entry.title.trim() || 'Registro salvo no IndexedDB')}</strong>
+            <span>${summaryBits.length ? summaryBits.join(' · ') : 'Relato salvo offline com segurança'}</span>
+          </div>
+        </div>
+
+        <div class="post-save-actions">
+          <button type="button" class="btn-gold" id="ps-share-btn">
+            ${ICONS.share}
+            <span>${mediaCount > 0 ? 'Compartilhar Mídias' : 'Compartilhar Registro'}</span>
+          </button>
+          <button type="button" class="gold-outline-btn" id="ps-folder-btn">
+            ${ICONS.folder}
+            <span>Salvar na Pasta DIARIO</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn-secondary" data-close-ps>Concluir</button>
+      </div>
+    </div>
+  `;
+
+  modal.querySelectorAll('[data-close-ps]').forEach((el) => {
+    el.addEventListener('click', () => modal.classList.remove('open'));
+  });
+
+  modal.querySelector('#ps-share-btn')?.addEventListener('click', () => {
+    shareEntryMedia(entry, { onToast: showToast });
+  });
+
+  modal.querySelector('#ps-folder-btn')?.addEventListener('click', () => {
+    saveEntryToDiarioFolder(entry, { onToast: showToast });
+  });
+
+  modal.classList.add('open');
+}
+
 // --- PWA Install Handler ---
 async function handleInstallPWA() {
   if (isStandalone) {
@@ -1244,6 +1391,148 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
+// --- Web Share Target Intake (opens new entry editor pre-filled with shared media/text) ---
+async function handleIncomingShareTarget() {
+  const params = new URLSearchParams(window.location.search);
+  const shareParam = params.get('share-target');
+  const getTitle = (params.get('title') || '').trim();
+  const getText = (params.get('text') || '').trim();
+  const getUrl = (params.get('url') || '').trim();
+
+  if (shareParam || getTitle || getText || getUrl) {
+    window.history.replaceState({}, document.title, window.location.pathname);
+  }
+
+  if (shareParam === 'error') {
+    showToast('Não foi possível ler os itens compartilhados.');
+    return;
+  }
+
+  let pending = null;
+  if (shareParam) {
+    pending = await consumePendingShare(shareParam);
+  } else if (getTitle || getText || getUrl) {
+    pending = { title: getTitle, text: getText, url: getUrl, files: [] };
+  } else {
+    pending = await consumePendingShare(null);
+  }
+
+  if (!pending) return;
+
+  // Dismiss splash immediately so user lands straight into the pre-filled new entry
+  document.getElementById('splash-screen')?.remove();
+  showToast('Preparando itens compartilhados...');
+
+  const photos = [];
+  const videos = [];
+  const audios = [];
+  const extraTexts = [];
+
+  for (const f of pending.files || []) {
+    if (!f || !f.blob) continue;
+    const mime = (f.type || f.blob.type || '').toLowerCase();
+    const name = f.name || 'anexo';
+
+    if (mime.startsWith('image/') || /\.(jpe?g|png|webp|gif|bmp|avif)$/i.test(name)) {
+      try {
+        const res = await compressPhotoWithStats(f.blob, 1280, 0.82);
+        photos.push({
+          id: `ph_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          name,
+          type: res.blob.type || 'image/jpeg',
+          caption: '',
+          originalSize: res.originalSize,
+          compressedSize: res.compressedSize,
+          width: res.width,
+          height: res.height,
+          blob: res.blob
+        });
+      } catch {
+        // skip invalid image
+      }
+    } else if (mime.startsWith('video/') || /\.(mp4|webm|mov|m4v|3gp|mkv)$/i.test(name)) {
+      videos.push({
+        id: `vid_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        name,
+        type: mime || 'video/mp4',
+        size: f.size || f.blob.size || 0,
+        caption: '',
+        createdAt: Date.now(),
+        blob: f.blob
+      });
+    } else if (mime.startsWith('audio/') || /\.(mp3|m4a|ogg|wav|aac|opus|flac)$/i.test(name)) {
+      const duration = await extractAudioDuration(f.blob);
+      const cleanTitle = name.replace(/\.[^.]+$/, '') || 'Áudio compartilhado';
+      audios.push({
+        id: `au_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        blob: f.blob,
+        duration,
+        mimeType: mime || 'audio/mpeg',
+        title: cleanTitle,
+        source: 'file',
+        createdAt: Date.now(),
+        recordedAt: Date.now()
+      });
+    } else if (mime.startsWith('text/') || /\.txt$/i.test(name)) {
+      try {
+        const txt = (await f.blob.text()).trim();
+        if (txt) extraTexts.push(txt);
+      } catch {
+        // ignore unreadable text file
+      }
+    }
+  }
+
+  const contentBlocks = [];
+  if (pending.text) contentBlocks.push(pending.text);
+  if (pending.url && (!pending.text || !pending.text.includes(pending.url))) {
+    contentBlocks.push(pending.url);
+  }
+  for (const extra of extraTexts) {
+    contentBlocks.push(extra);
+  }
+
+  const now = new Date();
+  const draftEntry = normalizeEntry({
+    id: null,
+    dateKey: toDateKey(now),
+    timeStr: toTimeStr(now),
+    title: pending.title || '',
+    content: contentBlocks.join('\n\n'),
+    photos,
+    videos,
+    audios
+  });
+  draftEntry.id = null; // keep null so editor treats as brand-new entry
+
+  const hasMedia = photos.length + videos.length > 0;
+  const hasAudio = audios.length > 0;
+  const hasText = Boolean(draftEntry.title || draftEntry.content);
+
+  let initialTab = 'overview';
+  if (hasMedia && !hasAudio && !hasText) initialTab = 'photos';
+  else if (hasAudio && !hasMedia && !hasText) initialTab = 'audios';
+  else if (hasText && !hasMedia && !hasAudio) initialTab = 'text';
+
+  launchEditor({
+    entry: draftEntry,
+    dateKey: draftEntry.dateKey,
+    initialTab
+  });
+
+  const summaryParts = [];
+  if (photos.length) summaryParts.push(`${photos.length} ${photos.length === 1 ? 'foto' : 'fotos'}`);
+  if (videos.length) summaryParts.push(`${videos.length} ${videos.length === 1 ? 'vídeo' : 'vídeos'}`);
+  if (audios.length) summaryParts.push(`${audios.length} ${audios.length === 1 ? 'áudio' : 'áudios'}`);
+  if (hasText) summaryParts.push('texto');
+
+  showToast(
+    summaryParts.length
+      ? `Recebido via Compartilhar: ${summaryParts.join(', ')}`
+      : 'Novo registro aberto para compartilhar'
+  );
+}
+
 // --- Bootstrap ---
 async function init() {
   initSplashScreen();
@@ -1270,6 +1559,7 @@ async function init() {
   await openDB();
   await refreshMural();
   await refreshEntries();
+  await handleIncomingShareTarget();
 }
 
 init();

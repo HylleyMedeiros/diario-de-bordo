@@ -4719,3 +4719,178 @@ button {
   font-size: 11.5px;
   color: var(--text-secondary);
 }
+
+/* ==========================================================================
+   Web Share Target — Videos & Dual Media Actions
+   ========================================================================== */
+.photos-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+}
+
+.photos-empty-btns {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.photos-empty-btns .gold-outline-btn {
+  flex: 1;
+  min-width: 120px;
+}
+
+.capsule-videos-section {
+  margin-top: 18px;
+}
+
+.capsule-sub-heading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 10px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--gold);
+}
+
+.capsule-sub-heading svg {
+  width: 16px;
+  height: 16px;
+}
+
+.capsule-video-card {
+  overflow: hidden;
+}
+
+.capsule-video-frame {
+  position: relative;
+  width: 100%;
+  background: #0D0D0D;
+}
+
+.capsule-video-player {
+  width: 100%;
+  max-height: 290px;
+  display: block;
+  background: #0D0D0D;
+}
+
+/* ==========================================================================
+   Export & Native Sharing (Web Share API + Local DIARIO Folder)
+   ========================================================================== */
+.capsule-export-card {
+  padding: 13px 14px;
+  margin-top: 14px;
+  background: linear-gradient(135deg, rgba(212, 180, 131, 0.08) 0%, var(--bg-card) 72%);
+  border-color: rgba(212, 180, 131, 0.24);
+}
+
+.capsule-export-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 11px;
+}
+
+.capsule-export-head span {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--gold);
+}
+
+.capsule-export-head small {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.capsule-export-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.capsule-export-actions .btn-gold,
+.capsule-export-actions .gold-outline-btn {
+  width: 100%;
+  text-align: center;
+}
+
+.reader-media-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.rmb-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.post-save-hero {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #161616;
+  border: 1px solid rgba(212, 180, 131, 0.24);
+  border-radius: 14px;
+  padding: 13px 14px;
+}
+
+.post-save-check {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--gold-dim);
+  color: var(--gold);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.post-save-check svg {
+  width: 20px;
+  height: 20px;
+}
+
+.post-save-meta {
+  min-width: 0;
+  flex: 1;
+}
+
+.post-save-meta strong {
+  display: block;
+  font-size: 14.5px;
+  color: var(--text-primary);
+  margin-bottom: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.post-save-meta span {
+  display: block;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.post-save-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.post-save-actions .btn-gold,
+.post-save-actions .gold-outline-btn {
+  width: 100%;
+}

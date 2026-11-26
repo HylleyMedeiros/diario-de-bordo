@@ -65,6 +65,20 @@ export function normalizeEntry(raw = {}) {
         }))
     : [];
 
+  const videos = Array.isArray(raw.videos)
+    ? raw.videos
+        .filter((v) => v && (v.blob || v.dataUrl))
+        .map((v) => ({
+          id: v.id || `vid_${now}_${Math.random().toString(36).slice(2, 7)}`,
+          blob: v.blob || null,
+          name: v.name || 'video.mp4',
+          type: v.type || v.blob?.type || 'video/mp4',
+          size: typeof v.size === 'number' ? v.size : (v.blob?.size || 0),
+          caption: typeof v.caption === 'string' ? v.caption : '',
+          createdAt: v.createdAt || now
+        }))
+    : [];
+
   const audios = Array.isArray(raw.audios)
     ? raw.audios
         .filter((a) => a && (a.blob || a.dataUrl))
@@ -118,6 +132,7 @@ export function normalizeEntry(raw = {}) {
     tags: Array.isArray(raw.tags) ? raw.tags.map((t) => String(t)) : [],
     checklist: Array.isArray(raw.checklist) ? raw.checklist.map((c) => ({ ...c })) : [],
     photos,
+    videos,
     audios,
     style: {
       fontFamily: raw.style?.fontFamily || 'default',
@@ -465,6 +480,21 @@ export async function exportFullBackup() {
         });
       }
     }
+    const videos = [];
+    for (const v of e.videos || []) {
+      const dataUrl = v.blob ? await blobToDataURL(v.blob) : (v.dataUrl || null);
+      if (dataUrl) {
+        videos.push({
+          id: v.id,
+          name: v.name || 'video.mp4',
+          type: v.type || 'video/mp4',
+          size: v.size || 0,
+          caption: v.caption || '',
+          createdAt: v.createdAt || Date.now(),
+          dataUrl
+        });
+      }
+    }
     const audios = [];
     for (const a of e.audios || []) {
       const dataUrl = a.blob ? await blobToDataURL(a.blob) : (a.dataUrl || null);
@@ -481,7 +511,7 @@ export async function exportFullBackup() {
         });
       }
     }
-    serializedEntries.push({ ...e, photos, audios });
+    serializedEntries.push({ ...e, photos, videos, audios });
   }
 
   let serializedMural = null;
@@ -519,7 +549,7 @@ export async function exportFullBackup() {
 
   return {
     app: 'Diário de Bordo',
-    version: 4,
+    version: 5,
     exportedAt: new Date().toISOString(),
     entries: serializedEntries,
     mural: serializedMural,
@@ -548,6 +578,18 @@ export async function importFullBackup(backupData) {
       }))
       .filter((p) => p.blob);
 
+    const videos = (e.videos || [])
+      .map((v) => ({
+        id: v.id || `vid_${Math.random().toString(36).slice(2, 9)}`,
+        name: v.name || 'video.mp4',
+        type: v.type || 'video/mp4',
+        size: typeof v.size === 'number' ? v.size : 0,
+        caption: typeof v.caption === 'string' ? v.caption : '',
+        createdAt: v.createdAt || Date.now(),
+        blob: v.dataUrl ? dataURLToBlob(v.dataUrl) : null
+      }))
+      .filter((v) => v.blob);
+
     const audios = (e.audios || [])
       .map((a) => ({
         id: a.id || `au_${Math.random().toString(36).slice(2, 9)}`,
@@ -561,7 +603,7 @@ export async function importFullBackup(backupData) {
       }))
       .filter((a) => a.blob);
 
-    await saveEntry({ ...e, photos, audios });
+    await saveEntry({ ...e, photos, videos, audios });
     importedCount++;
   }
 
@@ -612,4 +654,79 @@ export async function getStorageEstimate() {
     }
   }
   return null;
+}
+
+// --- Web Share Target Inbox Reader (consumes temporary share staged by sw.js) ---
+const SHARE_DB_NAME = 'DiarioDeBordoShareInbox';
+const SHARE_DB_VERSION = 1;
+const SHARE_STORE = 'pending_shares';
+
+export async function consumePendingShare(shareId = null) {
+  if (shareId === 'error') return null;
+
+  let db;
+  try {
+    db = await new Promise((resolve, reject) => {
+      const req = indexedDB.open(SHARE_DB_NAME, SHARE_DB_VERSION);
+      req.onupgradeneeded = (e) => {
+        const database = e.target.result;
+        if (!database.objectStoreNames.contains(SHARE_STORE)) {
+          database.createObjectStore(SHARE_STORE, { keyPath: 'id' });
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  } catch {
+    return null;
+  }
+
+  return new Promise((resolve) => {
+    try {
+      const t = db.transaction(SHARE_STORE, 'readwrite');
+      const store = t.objectStore(SHARE_STORE);
+
+      if (shareId) {
+        const req = store.get(shareId);
+        req.onsuccess = () => {
+          const found = req.result || null;
+          if (found) store.delete(found.id);
+          t.oncomplete = () => {
+            db.close();
+            resolve(found);
+          };
+          t.onerror = () => {
+            db.close();
+            resolve(found);
+          };
+        };
+        req.onerror = () => {
+          db.close();
+          resolve(null);
+        };
+      } else {
+        const req = store.getAll();
+        req.onsuccess = () => {
+          const all = (req.result || []).sort((a, b) => (b.receivedAt || 0) - (a.receivedAt || 0));
+          const latest = all[0] || null;
+          if (latest) store.delete(latest.id);
+          t.oncomplete = () => {
+            db.close();
+            resolve(latest);
+          };
+          t.onerror = () => {
+            db.close();
+            resolve(latest);
+          };
+        };
+        req.onerror = () => {
+          db.close();
+          resolve(null);
+        };
+      }
+    } catch {
+      db.close();
+      resolve(null);
+    }
+  });
 }

@@ -185,6 +185,7 @@ export function openEditor({
     tags: entry?.tags ? [...entry.tags] : [],
     checklist: entry?.checklist ? entry.checklist.map((c) => ({ ...c })) : [],
     photos: entry?.photos ? entry.photos.map((p) => ({ ...p })) : [],
+    videos: entry?.videos ? entry.videos.map((v) => ({ ...v })) : [],
     audios: entry?.audios ? entry.audios.map((a) => ({ ...a })) : [],
     style: {
       fontFamily: entry?.style?.fontFamily || 'default',
@@ -285,7 +286,7 @@ function renderCapsuleTabsBar(modal) {
   const bar = modal.querySelector('#ed-capsule-tabs');
   if (!bar) return;
 
-  const photoCount = currentState.photos.length;
+  const photoCount = currentState.photos.length + currentState.videos.length;
   const audioCount = currentState.audios.length;
   const momentCount = currentState.timelineMoments.length;
   const goodCount = getFilledGoodThings().length;
@@ -426,6 +427,7 @@ function renderEditorShell(modal, callbacks) {
 
       <!-- Hidden File Pickers -->
       <input type="file" id="ed-photo-file-input" accept="image/*" multiple hidden>
+      <input type="file" id="ed-video-file-input" accept="video/*" multiple hidden>
       <input type="file" id="ed-audio-file-input" accept="audio/*" multiple hidden>
 
       <!-- Bottom Formatting Toolbar (shown on Texto & Autoria tab) -->
@@ -613,6 +615,35 @@ function wireShellEvents(modal, callbacks) {
     }
   });
 
+  // Video file picker
+  const videoInput = modal.querySelector('#ed-video-file-input');
+  videoInput?.addEventListener('change', (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    let added = 0;
+    for (const file of files) {
+      if (file.type && !file.type.startsWith('video/')) continue;
+      currentState.videos.push({
+        id: `vid_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        blob: file,
+        name: file.name || 'video.mp4',
+        type: file.type || 'video/mp4',
+        size: file.size || 0,
+        caption: '',
+        createdAt: Date.now()
+      });
+      added++;
+    }
+    videoInput.value = '';
+    if (added > 0) {
+      renderCapsuleTabsBar(modal);
+      if (activeCapsuleTab === 'photos' || activeCapsuleTab === 'overview') {
+        renderActiveCapsulePane(modal, callbacks);
+      }
+      callbacks.onToast?.(`${added} ${added === 1 ? 'vídeo anexado' : 'vídeos anexados'}!`);
+    }
+  });
+
   // Device audio file picker
   const audioInput = modal.querySelector('#ed-audio-file-input');
   audioInput.addEventListener('change', async (e) => {
@@ -704,6 +735,7 @@ function wireShellEvents(modal, callbacks) {
       cleanGoodThings.length > 0 ||
       cleanChecklist.length > 0 ||
       currentState.photos.length > 0 ||
+      currentState.videos.length > 0 ||
       currentState.audios.length > 0;
 
     if (!hasSomething) {
@@ -850,6 +882,13 @@ function renderOverviewTab(modal, host, callbacks) {
     `
     : '';
 
+  const mediaTotal = currentState.photos.length + currentState.videos.length;
+  const mediaLabel = currentState.videos.length > 0
+    ? (currentState.photos.length > 0
+        ? `${currentState.photos.length} foto${currentState.photos.length > 1 ? 's' : ''} · ${currentState.videos.length} vídeo${currentState.videos.length > 1 ? 's' : ''}`
+        : (currentState.videos.length === 1 ? 'Vídeo no dia' : 'Vídeos no dia'))
+    : (currentState.photos.length === 1 ? 'Foto no dia' : 'Fotos no dia');
+
   host.innerHTML = `
     <!-- Evento Marcante Card -->
     <section class="milestone-card ${currentState.isMilestone ? 'active' : ''}">
@@ -893,8 +932,8 @@ function renderOverviewTab(modal, host, callbacks) {
     <section class="capsule-summary-grid" aria-label="Resumo da Cápsula">
       <button type="button" class="capsule-stat-tile" data-jump-tab="photos">
         <span class="cstat-icon">${ICONS.gallery}</span>
-        <strong>${currentState.photos.length}</strong>
-        <span>${currentState.photos.length === 1 ? 'Foto no dia' : 'Fotos no dia'}</span>
+        <strong>${mediaTotal}</strong>
+        <span>${mediaLabel}</span>
       </button>
 
       <button type="button" class="capsule-stat-tile" data-jump-tab="audios">
@@ -1404,10 +1443,11 @@ function renderTimelineTab(modal, host, callbacks) {
 }
 
 // ============================================================================
-// TAB 2: FOTOS DO DIA (Compressão Leve Automática + Legenda + Lightbox)
+// TAB 2: FOTOS & VÍDEOS DO DIA (Compressão Leve Automática + Legenda + Lightbox)
 // ============================================================================
 function renderPhotosTab(modal, host, callbacks) {
   const photoInput = modal.querySelector('#ed-photo-file-input');
+  const videoInput = modal.querySelector('#ed-video-file-input');
 
   const cardsHtml = currentState.photos.map((ph, idx) => {
     const url = URL.createObjectURL(ph.blob);
@@ -1437,16 +1477,48 @@ function renderPhotosTab(modal, host, callbacks) {
     `;
   }).join('');
 
+  const videosHtml = currentState.videos.map((vid, idx) => {
+    const url = URL.createObjectURL(vid.blob);
+    editorObjectUrls.push(url);
+    const sizeText = formatBytes(vid.size || vid.blob?.size || 0);
+    return `
+      <article class="card capsule-video-card">
+        <div class="capsule-video-frame">
+          <video class="capsule-video-player" src="${url}" controls playsinline preload="metadata"></video>
+          <span class="photo-size-pill">${sizeText}</span>
+          <button type="button" class="thumb-remove-btn" data-ed-del-video="${idx}" aria-label="Remover vídeo">&times;</button>
+        </div>
+        <div class="capsule-photo-caption-wrap">
+          <input
+            type="text"
+            class="photo-caption-input"
+            data-video-caption="${idx}"
+            maxlength="140"
+            placeholder="Legenda ou contexto curto deste vídeo..."
+            value="${escapeHtml(vid.caption || '')}">
+        </div>
+      </article>
+    `;
+  }).join('');
+
+  const hasAnyMedia = currentState.photos.length > 0 || currentState.videos.length > 0;
+
   host.innerHTML = `
     <div class="capsule-section-head">
       <div>
-        <h3>Fotos do Dia</h3>
-        <p>Compressão leve automática (máx. 1280px · JPEG 82%)</p>
+        <h3>Fotos &amp; Vídeos</h3>
+        <p>Fotos comprimidas (1280px · JPEG 82%) e vídeos locais</p>
       </div>
-      <button type="button" class="btn-gold btn-sm" id="cap-add-photos-btn">
-        ${ICONS.gallery}
-        <span>Anexar</span>
-      </button>
+      <div class="photos-head-actions">
+        <button type="button" class="btn-secondary btn-sm" id="cap-add-videos-btn" title="Anexar vídeos">
+          ${ICONS.video}
+          <span>Vídeo</span>
+        </button>
+        <button type="button" class="btn-gold btn-sm" id="cap-add-photos-btn">
+          ${ICONS.gallery}
+          <span>Foto</span>
+        </button>
+      </div>
     </div>
 
     ${lastCompressionSummary ? `
@@ -1456,16 +1528,27 @@ function renderPhotosTab(modal, host, callbacks) {
       </div>
     ` : ''}
 
-    ${currentState.photos.length === 0
+    ${!hasAnyMedia
       ? `
         <div class="card capsule-empty-box" id="cap-photos-empty-drop">
           <div class="capsule-empty-icon">${ICONS.gallery}</div>
-          <h4>Nenhuma foto nesta cápsula</h4>
-          <p>Escolha múltiplas fotos da galeria ou computador. Elas são redimensionadas e salvas localmente com ótima nitidez.</p>
-          <button type="button" class="gold-outline-btn btn-sm" id="cap-add-photos-empty">Selecionar fotos</button>
+          <h4>Nenhuma foto ou vídeo nesta cápsula</h4>
+          <p>Escolha múltiplas fotos ou vídeos da galeria, ou compartilhe direto para o Diário de Bordo.</p>
+          <div class="photos-empty-btns">
+            <button type="button" class="gold-outline-btn btn-sm" id="cap-add-photos-empty">Selecionar fotos</button>
+            <button type="button" class="gold-outline-btn btn-sm" id="cap-add-videos-empty">Selecionar vídeos</button>
+          </div>
         </div>
       `
-      : `<div class="capsule-photos-list">${cardsHtml}</div>`}
+      : `
+        ${currentState.photos.length > 0 ? `<div class="capsule-photos-list">${cardsHtml}</div>` : ''}
+        ${currentState.videos.length > 0 ? `
+          <div class="capsule-videos-section">
+            <h4 class="capsule-sub-heading">${ICONS.video} Vídeos do Dia (${currentState.videos.length})</h4>
+            <div class="capsule-photos-list">${videosHtml}</div>
+          </div>
+        ` : ''}
+      `}
   `;
 
   host.querySelector('#cap-add-photos-btn')?.addEventListener('click', () => {
@@ -1476,9 +1559,26 @@ function renderPhotosTab(modal, host, callbacks) {
     linkNextUploadedPhotoToMoment = false;
     photoInput?.click();
   });
+  host.querySelector('#cap-add-videos-btn')?.addEventListener('click', () => videoInput?.click());
+  host.querySelector('#cap-add-videos-empty')?.addEventListener('click', () => videoInput?.click());
   host.querySelector('#dismiss-comp-banner')?.addEventListener('click', () => {
     lastCompressionSummary = null;
     renderPhotosTab(modal, host, callbacks);
+  });
+
+  host.querySelectorAll('[data-ed-del-video]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      currentState.videos.splice(Number(btn.dataset.edDelVideo), 1);
+      renderCapsuleTabsBar(modal);
+      renderPhotosTab(modal, host, callbacks);
+    });
+  });
+
+  host.querySelectorAll('[data-video-caption]').forEach((inp) => {
+    inp.addEventListener('input', () => {
+      const idx = Number(inp.dataset.videoCaption);
+      if (currentState.videos[idx]) currentState.videos[idx].caption = inp.value;
+    });
   });
 
   host.querySelectorAll('[data-ed-zoom]').forEach((img) => {
